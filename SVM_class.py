@@ -7,36 +7,41 @@ SVM Class for SMO algorithm
 
 import numpy as np
 import numba 
-import SVM_lib as SVM 
-
-#%% Variables globales 
-
-global fac 
-global sig
-
-fac = 0.99/255
-sig = 5
 
 #%% class SMOModel:
 """Container object for the model used for sequential minimal optimization."""
 class SMOModel:
-    def __init__(self, X, y, alpha, kernel, mu, b, errors, eps, tol):
-        self.X = X               # training data vector
-        self.y = y               # class label vector
-        self.alpha = alpha       # regularization parameter
-        self.kernel = kernel     # kernel function
-        self.mu = mu             # lagrange multiplier vector
-        self.b = b               # scalar bias term
-        self.errors = errors     # error cache
-        self.eps = eps           # error on the mus
-        self.tol = tol           # Tolerance of the system 
-        self._obj = []           # record of objective function value
-        self.n = len(self.X)     # store size of training set
+    def __init__(self, X, y, alpha, kernel, mu, b, errors, eps, tol, args):
+        self.X = X               # Training data vector
+        self.y = y               # Class label vector
+        self.alpha = alpha       # Regularization parameter
+        self.kernel = kernel     # Kernel function
+        self.mu = mu             # Lagrange multiplier vector
+        self.b = b               # Scalar bias term
+        self.errors = errors     # Error cache
+        self.eps = eps           # Mu's tolerance
+        self.tol = tol           # Error tolerance
+        self._obj = []           # Record of objective function value
+        self.n = len(self.X)     # Store size of training set
+        self.args = args         # Arguments of the kernel (tuple-like)
+        self.G = gramm(self)
+    
+
+def gramm(model):
+    # G = np.zeros((model.n,model.n))
+    # for i in range(model.n):
+    #     for j in range(i, model.n):
+    #         value = model.kernel(model.X[i,:],model.X[j,:],model.args)
+    #         G[i,j] = value 
+    #         G[j,i] = value 
+    # model.G = G 
+    G = model.kernel(model.X,model.X,model.args)
+    return G
     
 # Objective function to optimize
 
 @numba.njit
-def objective_function(mu, y, K):
+def objective_function(mu,y,G):
     """
     Parameters
     ----------
@@ -53,54 +58,49 @@ def objective_function(mu, y, K):
         Fonction coût que l'on cherche à minimiser 
 
     """
-    return np.sum(mu) - 0.5*(mu*y).T@K@(mu*y)
+    return np.sum(mu) - 0.5*(mu*y).T@ G @(mu*y)
 
 
 # Decision function
 
-@numba.njit
-def decision_function(mu, y, K, ind_x, b):
+def decision_function(model,x_test):
     """
     Parameters
     ----------
-    mu : Array
-        Multiplicateurs de Lagrange de notre modèle
-    y : Array
-        Vecteur qui contient les vraies classes des données 
-    K : Array
-        Matrice de Gramm pour le noyau considéré
-    ind_x : Int
-        Indice permettant d'extraire la colonne associé à notre image dans la matrice de Gramm
-    b : Float
-        Biais du modèle
+    model : Class
+           Model used to train the SVM classifier 
+    x_test : Array
+          Image or input we want to evaluate 
 
     Returns
     -------
     Float
-        Prédiction pour l'image test correspondant à l'indice ind_x 
+        Prediction of the SVM for the considered input x_test
 
     """
-    return (mu*y).T@K[:,ind_x] - b
+    
+    result = (model.mu * model.y) @ model.kernel(model.X, x_test, model.args) - model.b
+    return result
 
 def decision_function2(mu, y, X_train, x_test, b, Kernel, arg):
     """Applies the SVM decision function to the input feature vectors in `x_test`."""
     K = Kernel(X_train,x_test,arg)
     if type(K) == np.ndarray:
-        result = (mu * y).T @ (Kernel(X_train, x_test,arg).reshape(-1,1)) - b
+        result = (mu * y).T @ (Kernel(X_train, x_test,arg)) - b
     else:
         result = (mu * y).T @ (Kernel(X_train, x_test,arg)) - b
     return result
 
-def take_step(i1, i2, model, K,arg):
+def take_step(i1, i2, model):
     
     # Skip if chosen mus are the same
     if i1 == i2:
         return 0, model
     
-    mu1 = model.mu[i1][0]
-    mu2 = model.mu[i2][0]
-    y1 = model.y[i1][0]
-    y2 = model.y[i2][0]
+    mu1 = model.mu[i1]
+    mu2 = model.mu[i2]
+    y1 = model.y[i1]
+    y2 = model.y[i2]
     E1 = model.errors[i1]
     E2 = model.errors[i2]
     s = y1 * y2
@@ -116,9 +116,9 @@ def take_step(i1, i2, model, K,arg):
         return 0, model
 
     # Compute kernel & 2nd derivative eta
-    k11 = K[i1,i1] 
-    k12 = K[i1,i2]
-    k22 = K[i2,i2]
+    k11 = model.G[i1,i1] 
+    k12 = model.G[i1,i2]
+    k22 = model.G[i2,i2]
     eta = 2 * k12 - k11 - k22
     
     # Compute new mu 2 (a2) if eta is negative
@@ -138,10 +138,10 @@ def take_step(i1, i2, model, K,arg):
         mu_adj = model.mu.copy()
         mu_adj[i2] = L
         # objective function output with a2 = L
-        Lobj = objective_function(mu_adj, model.y, K, model.X) 
+        Lobj = objective_function(model.mu,model.y,model.G) 
         mu_adj[i2] = H
         # objective function output with a2 = H
-        Hobj = objective_function(mu_adj, model.y, K, model.X)
+        Hobj = objective_function(model.mu,model.y,model.G)
         if Lobj > (Hobj + model.eps):
             a2 = L
         elif Lobj < (Hobj - model.eps):
@@ -188,19 +188,21 @@ def take_step(i1, i2, model, K,arg):
     
     # Set non-optimized errors based on equation 12.11 in Platt's book
     non_opt = [n for n in range(model.n) if (n != i1 and n != i2)]
-    model.errors[non_opt] = model.errors[non_opt] + \
-                            y1*(a1 - mu1)*model.kernel(model.X[i1], model.X[non_opt],arg) + \
-                            y2*(a2 - mu2)*model.kernel(model.X[i2], model.X[non_opt],arg) + model.b - b_new
+    model.errors[non_opt] += y1*(a1-mu1)*update(model.G, i1, non_opt) + \
+                             y2*(a2-mu2)*update(model.G, i2, non_opt) + model.b - b_new
+    # model.errors[non_opt] = model.errors[non_opt] + \
+                            # y1*(a1 - mu1)*model.kernel(model.X[i1], model.X[non_opt],arg) + \
+                            # y2*(a2 - mu2)*model.kernel(model.X[i2], model.X[non_opt],arg) + model.b - b_new
     
     # Update model threshold
     model.b = b_new
     
     return 1, model
     
-def examine_example(i2, model, K,arg):
+def examine_example(i2, model):
     
-    y2 = model.y[i2][0]
-    mu2 = model.mu[i2][0]
+    y2 = model.y[i2]
+    mu2 = model.mu[i2]
     E2 = model.errors[i2]
     r2 = E2 * y2
 
@@ -213,26 +215,26 @@ def examine_example(i2, model, K,arg):
                 i1 = np.argmin(model.errors)
             elif model.errors[i2] <= 0:
                 i1 = np.argmax(model.errors)
-            step_result, model = take_step(i1, i2, model, K,arg)
+            step_result, model = take_step(i1, i2, model)
             if step_result:
                 return 1, model
             
         # Loop through non-zero and non-alpha mus, starting at a random point
         for i1 in np.roll(np.where((model.mu != 0) & (model.mu != model.alpha))[0],
                           np.random.choice(np.arange(model.n))):
-            step_result, model = take_step(i1, i2, model, K,arg)
+            step_result, model = take_step(i1, i2, model)
             if step_result:
                 return 1, model
         
         # loop through all mus, starting at a random point
         for i1 in np.roll(np.arange(model.n), np.random.choice(np.arange(model.n))):
-            step_result, model = take_step(i1, i2, model, K,arg)
+            step_result, model = take_step(i1, i2, model)
             if step_result:
                 return 1, model
     
     return 0, model
 
-def train(model,K,arg):
+def train(model):
     """
     Parameters
     ----------
@@ -255,18 +257,18 @@ def train(model,K,arg):
         if examineAll:
             # loop over all training examples
             for i in range(model.mu.shape[0]):
-                examine_result, model = examine_example(i, model, K, arg)
+                examine_result, model = examine_example(i, model)
                 numChanged += examine_result
                 if examine_result:
-                    obj_result = objective_function(model.mu, model.y, K)
+                    obj_result = objective_function(model.mu,model.y,model.G)
                     model._obj.append(obj_result)
         else:
             # loop over examples where mus are not already at their limits
             for i in np.where((model.mu != 0) & (model.mu != model.alpha))[0]:
-                examine_result, model = examine_example(i, model, K,arg)
+                examine_result, model = examine_example(i, model)
                 numChanged += examine_result
                 if examine_result:
-                    obj_result = objective_function(model.mu, model.y, K)
+                    obj_result = objective_function(model.mu,model.y,model.G)
                     model._obj.append(obj_result)
         if examineAll == 1:
             examineAll = 0
@@ -275,14 +277,37 @@ def train(model,K,arg):
         
     return model
 
-@numba.jit 
-def gaussian_kernel(x, y, sig):
+# Code fait avec des boucles (donc plus long et moins propre) pour l'optimisation numba.njit (sans les np.newaxis, np.linalg.norm...)
+@numba.njit 
+def gaussian_kernel(x, y, args):
     """Returns the gaussian similarity of arrays `x` and `y` with
     kernel width parameter `sigma` (set to 10 by default)."""
-    if np.ndim(x) == 1 and np.ndim(y) == 1:
-        result = np.exp(- (np.linalg.norm(x - y, 2)) ** 2 / (2 * sig ** 2))
-    elif (np.ndim(x) > 1 and np.ndim(y) == 1) or (np.ndim(x) == 1 and np.ndim(y) > 1):
-        result = np.exp(- (np.linalg.norm(x - y, 2, axis=1) ** 2) / (2 * sig ** 2))
-    elif np.ndim(x) > 1 and np.ndim(y) > 1:
-        result = np.exp(- (np.linalg.norm(x[:, np.newaxis] - y[np.newaxis, :], 2, axis=2) ** 2) / (2 * sig ** 2))
+    if x.ndim == 1 and y.ndim == 1:
+        result = np.exp(-((x-y)@(x-y))/ (2 * args ** 2))
+        
+    elif (x.ndim > 1 and y.ndim == 1) or (x.ndim == 1 and y.ndim > 1):
+        diff = x - y
+        dist2 = np.sum(diff**2, axis=1)
+        result = np.exp(-dist2 / (2 * args **2))
+        
+    elif x.ndim > 1 and y.ndim > 1:
+        n, m = x.shape[0], y.shape[0]
+        result = np.empty((n, m))
+        for i in range(n):
+            for j in range(m):
+                diff = x[i] - y[j]
+                result[i, j] = np.exp(-np.dot(diff, diff) / (2 * args ** 2))
+                
     return result
+
+@numba.njit
+def linear_kernel(x, y, b=1):
+    """Returns the linear combination of arrays `x` and `y` with
+    the optional bias term `b` (set to 1 by default)."""
+    
+    return x @ y.T + b # Note the @ operator for matrix multiplication
+
+@numba.njit 
+def update(G,i,non_opt):
+    actualisation = [G[i,k] for k in non_opt]
+    return np.array(actualisation)

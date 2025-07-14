@@ -10,6 +10,8 @@ import numpy as np
 import numba 
 import matplotlib.pyplot as plt 
 import SVM_class as SVMC
+import pickle
+import os
 
 #%% Variables globales 
 
@@ -22,6 +24,52 @@ fac = 0.99/255
 sig = 0.9
 c = 3 
 d = 2
+
+#%% Routine pour choisir des fichiers tests 
+
+def routine_test(path_u,path_v,nb_u,nb_v):
+    # Chargement des données de v
+    with open(path_v, 'rb') as f:
+        train_cifar = pickle.load(f, encoding='bytes')
+        
+    # Mise sous forme de liste
+    train_cifar = list(train_cifar.values())[2]
+
+    # Chargement du dossier vers les images de u
+    files_u = os.listdir(path_u)
+    
+    # Vecteur de u contenant les images en teinte de gris sous le format de reshape
+    u = np.zeros((32*32, nb_u))
+    
+    # Remplissage du vecteur u
+    compt = 0
+    for file in files_u:
+        if file == "neutral":
+            pict = os.listdir(f"{path_u}/{file}")
+            for picture in pict:
+                u_bw = cv2.imread(f"{path_u}/{file}/{picture}",0)
+                u[:,compt] = cv2.resize(u_bw, (32,32)).reshape(-1,order = 'C')*fac + 0.01
+                compt += 1 
+                if compt == nb_u - 1:
+                    break
+
+    # Vecteur de v contenant les images en teinte de gris sous le format de reshape
+    v = np.zeros((32*32,nb_v))
+    
+    # Remplissage du vecteur v
+    for i in range(nb_v):
+        img_v = np.zeros((32,32,3))
+        for j in range(3):
+            img_v[:,:,j] = train_cifar[i,(1024*j):(1024*(j+1))].reshape(32,32)
+        imgs_v_bw = cv2.cvtColor(img_v.astype("uint8"), cv2.COLOR_BGR2GRAY)
+        v[:,i] = imgs_v_bw.reshape(-1,order = "C")*fac + 0.01
+
+    X = np.concatenate((u.T,v.T))
+    Y = np.zeros(nb_u + nb_v)
+    Y[:nb_u] = 1
+    Y[nb_u:] = -1 
+    
+    return X,Y    
 
 #%% SVM hard margin avec UZAWA
 
@@ -282,7 +330,7 @@ def metric_uza(y,a,b,X,K,x):
     return accuracy, precision, recall, F1,confusion_matrix
 
 #%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-
+"""
 def cam(a,b,kernel,X,y):
     # Ouvrir la caméra (0 si caméra principale)
     cap = cv2.VideoCapture(0)
@@ -336,7 +384,7 @@ def cam(a,b,kernel,X,y):
         # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
         if cv2.waitKey(1) == 27 :
             break
-
+"""
 #%% SVM soft margin algorithme SMO simplifié 
 
 def SMO_simplified(alpha, tol, N, X, Y, K):
@@ -529,42 +577,35 @@ def f_D(x,X,mu,y,K,b):
     G = np.zeros((n,1)) 
     
     for i in range(n):
-        G[i,0] = K(x,X[i,:])
+        G[i,0] = K(x,X[i,:],7)
         
     return ((mu*y).T@G)[0,0] - b
 
 #%% Fonction qui permet le calcul des metriques precision, recall et F1-score 
 
-def metric(y,mu,b,K):
-    n = len(y)
+def metric(model,x_test):
+    n = model.n
     confusion_matrix = np.zeros((2,2))
     for i in range(n):
-        estimation = np.sign(f_D_data(mu,y,b,K[:,i].reshape(-1,1)))[0]
-        if estimation > 0 and y[i] > 0:
+        estimation = np.sign(SVMC.decision_function(model, x_test[i,:]))
+        if estimation > 0 and model.y[i] > 0:
             confusion_matrix[1,1] += 1 # Détection d'un true positive 
-        elif estimation > 0 and y[i] < 0:
+        elif estimation > 0 and model.y[i] < 0:
             confusion_matrix[0,1] += 1 # Détection d'un false positive
-        elif estimation < 0 and y[i] > 0:
+        elif estimation < 0 and model.y[i] > 0:
             confusion_matrix[1,0] += 1 # Détection d'un false negative 
-        elif estimation < 0 and y[i] < 0:
+        elif estimation < 0 and model.y[i] < 0:
             confusion_matrix[0,0] += 1 # Détection d'un true negative 
-            
-    if (confusion_matrix[1,1] != 0) or (confusion_matrix[0,1] != 0):
+    try:
         precision = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[0,1])
-    else:
-        precision = 0 
-        
-    if (confusion_matrix[1,1] != 0) or (confusion_matrix[1,0] != 0):
         recall = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[1,0])
-    else:
-        recall = 0 
-        
-    if recall == 0 and precision == 0:
-        F1 = 0
-    else:
         F1 = 2*precision*recall/(precision+recall) 
         accuracy = (confusion_matrix[0,0]+confusion_matrix[1,1])/n 
-    return accuracy, precision, recall, F1,confusion_matrix
+        
+        return accuracy, precision, recall, F1,confusion_matrix
+    
+    except ValueError:
+        print("Division by zero occured in the confusion matrix, change the model")
 
 #%% Affichage de la métrique Accuracy
 
@@ -926,7 +967,7 @@ def Classification_Haar(Img, model,arg):
         return False 
 
 #%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-"""
+
 def cam(mu,b,kernel,X,y):
     # Ouvrir la caméra (0 si caméra principale)
     cap = cv2.VideoCapture(0)
@@ -978,7 +1019,7 @@ def cam(mu,b,kernel,X,y):
         # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
         if cv2.waitKey(1) == 27 :
             break
-"""
+
 #%% SVM soft margin à partir de l'algorithme d'uzawa à noyaux 
 
 def Soft_margin_K(alpha, roh, it, tol, u, v, C):
