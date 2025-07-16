@@ -278,7 +278,7 @@ def train(model):
     return model
 
 # Code fait avec des boucles (donc plus long et moins propre) pour l'optimisation numba.njit (sans les np.newaxis, np.linalg.norm...)
-@numba.njit 
+@numba.njit(parallel = True)
 def gaussian_kernel(x, y, args):
     """Returns the gaussian similarity of arrays `x` and `y` with
     kernel width parameter `sigma` (set to 10 by default)."""
@@ -293,9 +293,9 @@ def gaussian_kernel(x, y, args):
     elif x.ndim > 1 and y.ndim > 1:
         n, m = x.shape[0], y.shape[0]
         result = np.empty((n, m))
-        for i in range(n):
+        for i in numba.prange(n): # Parallélisation de la boucle sur les différents coeurs du CPU pour accélérer encore plus le process
             for j in range(m):
-                diff = x[i] - y[j]
+                diff = x[i,:] - y[j,:]
                 result[i, j] = np.exp(-np.dot(diff, diff) / (2 * args ** 2))
                 
     return result

@@ -10,7 +10,6 @@ import numpy as np
 import os
 import SVM_lib as SVM
 import SVM_class as SVMC 
-from SVM_lib import fac 
 import matplotlib.pyplot as plt 
 from PIL import Image
 import pickle
@@ -1583,7 +1582,7 @@ print("F1 = ", np.round(F1*100,2))
 #%% 
 
 import importlib 
-importlib.reload(SVM)
+importlib.reload(SVMC)
 
 #%% Test de la fonction routine 
 
@@ -1593,8 +1592,8 @@ fin2 = t.time()
 duree2 = fin2 - debut2 
 
 X_test,Y_test = SVM.routine_test("BD/train", "BD/cifar-10-batches-py/data_batch_1", 1000, 1000)
-X_test = X_test[1000:]
-Y_test = Y_test[1000:]
+X_test = X_test[750:1750]
+Y_test = Y_test[750:1750]
 
 #%% Test de la modification sur SVM_class 
 
@@ -1607,17 +1606,30 @@ mu_init = np.zeros(np.shape(X)[0])
 b_init = 0
 error_init = np.zeros(1000)
 
-sig = 7
+sig = 2500
 K = SVM.Gramm(SVM.gauss,X,sig)
 
 #%% 
 
-model = SVMC.SMOModel(X, Y, alpha, SVMC.gaussian_kernel, mu_init, b_init, error_init, eps, tol)
+model = SVMC.SMOModel(X = X, y = Y, alpha =  alpha, kernel = SVMC.gaussian_kernel, mu = mu_init, b = b_init,
+                      errors = error_init, eps = eps, tol = tol, args = sig)
 
-for j in range(len(X)):
-    # initial_error = SVMC.decision_function2(model.mu, model.y, model.X, model.X[j,:], model.b, SVM.kern_poly, (1.5,3)) - model.y[j][0]
-    initial_error = SVMC.decision_function2(model.mu, model.y, model.X, model.X[j,:], model.b, SVMC.gaussian_kernel, sig) - model.y[j][0]
-    model.errors[j] = initial_error
+initial_errors = SVMC.decision_function(model, X) - model.y
+model.errors = initial_errors
+
+model = SVMC.train(model)
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model, model.X)
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+
+accuracy_test, precision_test, recall_test, F1_test,confusion_matrix_test = SVM.metric(model, X_test)
+print("Accuracy test = ", np.round(accuracy_test*100,2))
+print("Precision test = ", np.round(precision_test*100,2))
+print("Recall test = ", np.round(recall_test*100,2))
+print("F1 test = ", np.round(F1_test*100,2))
 
 #%% 
 

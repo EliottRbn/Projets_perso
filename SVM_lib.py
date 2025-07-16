@@ -15,15 +15,15 @@ import os
 
 #%% Variables globales 
 
-global fac 
 global sig
 global c 
 global d
 
-fac = 0.99/255
 sig = 0.9
 c = 3 
 d = 2
+
+# Retravailler la normalisation des images !
 
 #%% Routine pour choisir des fichiers tests 
 
@@ -48,7 +48,7 @@ def routine_test(path_u,path_v,nb_u,nb_v):
             pict = os.listdir(f"{path_u}/{file}")
             for picture in pict:
                 u_bw = cv2.imread(f"{path_u}/{file}/{picture}",0)
-                u[:,compt] = cv2.resize(u_bw, (32,32)).reshape(-1,order = 'C')*fac + 0.01
+                u[:,compt] = cv2.resize(u_bw, (32,32)).reshape(-1,order = 'C')
                 compt += 1 
                 if compt == nb_u - 1:
                     break
@@ -62,7 +62,7 @@ def routine_test(path_u,path_v,nb_u,nb_v):
         for j in range(3):
             img_v[:,:,j] = train_cifar[i,(1024*j):(1024*(j+1))].reshape(32,32)
         imgs_v_bw = cv2.cvtColor(img_v.astype("uint8"), cv2.COLOR_BGR2GRAY)
-        v[:,i] = imgs_v_bw.reshape(-1,order = "C")*fac + 0.01
+        v[:,i] = imgs_v_bw.reshape(-1,order = "C")
 
     X = np.concatenate((u.T,v.T))
     Y = np.zeros(nb_u + nb_v)
