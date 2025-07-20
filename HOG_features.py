@@ -10,6 +10,7 @@ import cv2
 import os
 import pickle
 import numba 
+from math import cos, sin, radians
 
 files = [file for file in os.listdir('BD/train') if file == "neutral"]
 pictures = os.listdir(f"BD/train/{files[0]}")
@@ -52,12 +53,8 @@ def HOG(pict):
     ### Step 1 : Normalisation via la racine des pixels ###
     
     n = pict.shape[0]
-    # for i in range(n):
-    #     for j in range(n):
-    #         value = pict[i,j]
-    #         if value != 0: # On évite la division par zéro
-    #             pict[i,j] = value / np.sqrt(value) 
-                
+    pict = np.sqrt(pict)
+    
     ### Step 2 : Calcul du gradient et des orientations ### 
     
     Dy = np.zeros((n, n))
@@ -99,7 +96,7 @@ def HOG(pict):
     ### Step 3 : Weigthed vote in each cell ###
     
     nbins = 9
-    cell_size = 4 # On fait des cellules de taille 4x4 soit 64 cellules 
+    cell_size = 8 # On fait des cellules de taille 8x8 soit 64 cellules 
     fraction_size = n//cell_size
     cell_storage = np.empty((nbins*fraction_size,fraction_size), dtype = float)
     
@@ -108,6 +105,41 @@ def HOG(pict):
             window_G = G[i*cell_size:(i+1)*cell_size,j*cell_size:(j+1)*cell_size]
             window_theta = theta[i*cell_size:(i+1)*cell_size,j*cell_size:(j+1)*cell_size]
             cell_storage[i*nbins:(i+1)*nbins,j] = hist_OG(window_G,window_theta, cell_size)
+    
+    ### Test pour l'affichage ### 
+
+    # hog_image = np.zeros((n, n), dtype=float)
+    # angle_step = 180 // nbins
+    # half_cell = cell_size // 2
+
+    # n_cells = n // cell_size
+
+    # for y in range(n_cells):
+    #     for x in range(n_cells):
+    #         center_y = y * cell_size + half_cell
+    #         center_x = x * cell_size + half_cell
+    #         hist = cell_storage[(x*nbins):(x+1)*nbins, y]
+
+    #         for bin_idx in range(nbins):
+    #             angle = bin_idx * angle_step
+    #             rad = radians(angle)
+    #             magnitude = hist[bin_idx]
+
+    #             dx = cos(rad) * half_cell * magnitude
+    #             dy = sin(rad) * half_cell * magnitude
+
+    #             y1 = int(center_y - dy)
+    #             y2 = int(center_y + dy)
+    #             x1 = int(center_x - dx)
+    #             x2 = int(center_x + dx)
+
+    #             # On vérifie qu'on est dans les limites de l'image
+    #             if 0 <= x1 < n and 0 <= x2 < n and 0 <= y1 < n and 0 <= y2 < n:
+    #                 rr, cc = draw_line(y1, x1, y2, x2, n)
+    #                 hog_image[rr, cc] += magnitude  # Ajouter l’intensité
+
+    # # Normalisation pour affichage
+    # hog_image = hog_image / np.max(hog_image)
     
     ### Step 4 : Blocks normalization ### -> On prend des blocs de 2x2 cellules 
     
@@ -118,19 +150,51 @@ def HOG(pict):
             concatenate[nbins:2*nbins] = cell_storage[(i+1)*nbins:(i+2)*nbins,j] 
             concatenate[2*nbins:3*nbins] = cell_storage[i*nbins:(i+1)*nbins,j+1]
             concatenate[3*nbins:4*nbins] = cell_storage[(i+1)*nbins:(i+2)*nbins, j+1]
-            HOG_features.append(concatenate / np.sqrt(concatenate.T@concatenate)) 
+            # HOG_features.append(concatenate / np.sqrt(concatenate.T@concatenate)) 
+            
+            # Test de la normalisation L2-Hys : à voir si on a des meilleurs perfs avec ça ou pas 
+            
+            norm = np.sqrt(np.sum(concatenate ** 2))
+            if norm != 0.0: # Éviter les divisions par zéro et donc les blocks entiers de nan
+                concatenate = concatenate / norm 
+            
+            concatenate[concatenate > 0.2] = 0
+            
+            norm = np.sqrt(np.sum(concatenate ** 2))
+            if norm != 0.0: # Éviter les divisions par zéro et donc les blocks entiers de nan
+                concatenate = concatenate / norm
+                
+            HOG_features.append(concatenate)
     
-    return HOG_features
+    nb_features = len(HOG_features)
+    shape_features = HOG_features[0].shape[0]
+    
+    hog_features = np.empty(nb_features*shape_features, dtype = float)
+    
+    for i,feature in enumerate(HOG_features):
+        hog_features[i*shape_features:(i+1)*shape_features] = HOG_features[i]
+    
+    # Essayer de voir si ça change les perfs qu'on renormalise à la fin avec toutes les features ensemble
+    # pour envoyer un vecteur unitaire dans le truc... À voir
+    
+    return hog_features
+
+def draw_line(y1, x1, y2, x2, size):
+    from skimage.draw import line
+    rr, cc = line(y1, x1, y2, x2)
+    # On garde que les pixels dans l'image
+    mask = (rr >= 0) & (rr < size) & (cc >= 0) & (cc < size)
+    return rr[mask], cc[mask]
 
 #%% 
 
 # HOG_features = HOG(pict_test)
 # time = timer(HOG(pict_test))
 
-debut = time.time()
-HOG_features = HOG(pict_test)
-fin = time.time()
-print(f"Temps d'exécution avec Numba : {fin - debut:.4f}s")
+# debut = time.time()
+# HOG_features = HOG(pict_test)
+# fin = time.time()
+# print(f"Temps d'exécution avec Numba : {fin - debut:.4f}s")
 
 #%% Comparaison avec le descripteur de skimage 
 
@@ -141,8 +205,9 @@ features, hog_image = hog(
     orientations=9,
     pixels_per_cell=(4, 4),
     cells_per_block=(2, 2),
-    block_norm='L2-Hys',
+    block_norm='L2',
     visualize=True,
+    transform_sqrt=True,
     feature_vector=True
 )
 

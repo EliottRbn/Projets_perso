@@ -39,7 +39,93 @@ def timer(funct):
 
 #%% Routine pour choisir des fichiers tests 
 
-def routine_test(path_u,path_v,nb_u,nb_v):
+def raw_data(u,v):
+    nb_u = len(u)
+    nb_v = len(v)
+    
+    X = np.empty((nb_u + nb_v,4096), dtype = "float64")
+    for (i,img_u),(j,img_v) in zip(enumerate(u),enumerate(v)):
+        X[i,:] = u[i].flatten(order = 'C') / np.linalg.norm(u[i].flatten(order = 'C'))
+        X[nb_u+j,:] = v[j].flatten(order = 'C') / np.linalg.norm(v[j].flatten(order = 'C'))
+    
+    Y = np.zeros(nb_u + nb_v)
+    Y[:nb_u] = 1
+    Y[nb_u:] = -1 
+    
+    return X,Y   
+
+def Haar_data(u,v):
+    nb_u = len(u)
+    nb_v = len(v)
+    
+    # Features de taille fixe donc on initialise à la bonne taille 
+    X = np.empty((nb_u + nb_v,928), dtype= "float64")
+    
+    for (i,img_u),(j,img_v) in zip(enumerate(u),enumerate(v)):
+        X[i,:] = Haar_features(img_u)
+        X[nb_u + j,:] = Haar_features(img_v)
+    
+    Y = np.zeros(nb_u + nb_v)
+    Y[:nb_u] = 1 
+    Y[nb_u:] = -1 
+    
+    return X,Y
+
+def HOG_data(u,v):
+    nb_u = len(u)
+    if v is not None:
+        nb_v = len(v)
+        
+        # Les features sont de taille fixes donc on peut juste initialiser à la bonne taille directement
+        X = np.zeros((nb_u + nb_v,1764), dtype = "float64")
+        
+        for (i,img_u),(j,img_v) in zip(enumerate(u),enumerate(v)):
+            X[i,:] = HOG(img_u)
+            X[nb_u + j,:] = HOG(img_v)
+        
+        Y = np.zeros(nb_u + nb_v)
+        Y[:nb_u] = 1 
+        Y[nb_u:] = - 1
+        
+        return X,Y
+    
+    elif v is None:
+        X = HOG(u)
+        
+        return X
+
+def HOG_Haar_data(u,v):
+    nb_u = len(u)
+    
+    if v is not None:
+        nb_v = len(v)
+    
+        # Les features sont de taille fixe donc on initialise comme ça
+        X = np.empty((nb_u + nb_v,928+1764), dtype = "float64")
+        
+        for (i,img_u),(j,img_v) in zip(enumerate(u),enumerate(v)):
+            X[i,:928] = Haar_features(img_u)
+            X[nb_u + j,:928] = Haar_features(img_v)
+            X[i, 928:] = HOG(img_u)
+            X[nb_u + j,928:] = HOG(img_v)
+    
+        Y = np.zeros(nb_u + nb_v)
+        Y[:nb_u] = 1 
+        Y[nb_u:] = -1 
+               
+        # Essayer de voir si on a un intérêtà tout renormaliser après ou si c'est ok comme ça niveau perfo
+    
+        return X,Y
+    
+    elif v is None: # Pour l'affichage à la caméra, donc une seule image on s'en bat les couilles
+        X = np.empty((1,928+1764), dtype = "float64")
+        X[0,:928] = Haar_features(u)
+        X[0,928:] = HOG(u)
+        
+        return X
+ 
+
+def routine_test(path_u,path_v,nb_u,nb_v, config = raw_data):
     # Chargement des données de v
     with open(path_v, 'rb') as f:
         train_cifar = pickle.load(f, encoding='bytes')
@@ -50,8 +136,8 @@ def routine_test(path_u,path_v,nb_u,nb_v):
     # Chargement du dossier vers les images de u
     files_u = os.listdir(path_u)
     
-    # Vecteur de u contenant les images en teinte de gris sous le format de reshape
-    u = np.zeros((32*32, nb_u))
+    # Vecteur de u contenant les images en teinte de gris
+    u = []
     
     # Remplissage du vecteur u
     compt = 0
@@ -60,34 +146,29 @@ def routine_test(path_u,path_v,nb_u,nb_v):
             pict = os.listdir(f"{path_u}/{file}")
             for picture in pict:
                 u_bw = cv2.imread(f"{path_u}/{file}/{picture}",0)
-                u[:,compt] = cv2.resize(u_bw, (32,32)).reshape(-1,order = 'C')
+                u.append(cv2.resize(u_bw,(64,64), interpolation = cv2.INTER_AREA).astype("float64"))
                 compt += 1 
-                if compt == nb_u - 1:
+                if compt == nb_u :
                     break
 
-    # Vecteur de v contenant les images en teinte de gris sous le format de reshape
-    v = np.zeros((32*32,nb_v))
+    # Liste de v contenant les images en teinte de gris 
+    v = []
     
     # Remplissage du vecteur v
-    for i in range(nb_v):
+    for i in range(0,nb_v):
         img_v = np.zeros((32,32,3))
         for j in range(3):
             img_v[:,:,j] = train_cifar[i,(1024*j):(1024*(j+1))].reshape(32,32)
-        imgs_v_bw = cv2.cvtColor(img_v.astype("uint8"), cv2.COLOR_BGR2GRAY)
-        v[:,i] = imgs_v_bw.reshape(-1,order = "C")
-
-    X = np.concatenate((u.T,v.T))
-    Y = np.zeros(nb_u + nb_v)
-    Y[:nb_u] = 1
-    Y[nb_u:] = -1 
+        img_v_bw = cv2.cvtColor(img_v.astype("uint8"), cv2.COLOR_BGR2GRAY).astype("float64")
+        v.append(cv2.resize(img_v_bw, (64,64), interpolation = cv2.INTER_AREA))
     
-    return X,Y    
-
-#%% Descripteurs HOG
+    return config(u,v)
+   
+#%% Descripteurs HOG : Fait pour des images de taille 64x64 mais être facilement adapté juste en changeant la taille des cellules
 
 @numba.njit
 def hist_OG(G, theta, n, nbins = 9, min_val = 0, max_val = 180):
-    hist = np.zeros(nbins, dtype=float)
+    hist = np.zeros(nbins, dtype='float64')
     bin_width = (max_val - min_val) / nbins
     for i in range(n):
         for j in range(n):
@@ -106,12 +187,8 @@ def HOG(pict):
     ### Step 1 : Normalisation via la racine des pixels ###
     
     n = pict.shape[0]
-    for i in range(n):
-        for j in range(n):
-            value = pict[i,j]
-            if value != 0: # On évite la division par zéro
-                pict[i,j] = value / np.sqrt(value) 
-                
+    pict = np.sqrt(pict)
+    
     ### Step 2 : Calcul du gradient et des orientations ### 
     
     Dy = np.zeros((n, n))
@@ -145,19 +222,17 @@ def HOG(pict):
     Gy = Dy@pict
     
     G = np.sqrt(Gx**2 + Gy**2)
-    
+
     theta = np.degrees(np.arctan2(Gy,Gx)) % 180
-        
-    # Histogramme des gradients orientés 
     
     HOG_features = []
     
     ### Step 3 : Weigthed vote in each cell ###
     
     nbins = 9
-    cell_size = 4 # On fait des cellules de taille 4x4 soit 64 cellules 
+    cell_size = 8 # On fait des cellules de taille 8x8 soit 64 cellules 
     fraction_size = n//cell_size
-    cell_storage = np.empty((nbins*fraction_size,fraction_size), dtype = float)
+    cell_storage = np.empty((nbins*fraction_size,fraction_size), dtype = 'float64')
     
     for j in range(fraction_size):
         for i in range(fraction_size):
@@ -174,9 +249,35 @@ def HOG(pict):
             concatenate[nbins:2*nbins] = cell_storage[(i+1)*nbins:(i+2)*nbins,j] 
             concatenate[2*nbins:3*nbins] = cell_storage[i*nbins:(i+1)*nbins,j+1]
             concatenate[3*nbins:4*nbins] = cell_storage[(i+1)*nbins:(i+2)*nbins, j+1]
-            HOG_features.append(concatenate / np.sqrt(concatenate.T@concatenate)) 
+            # HOG_features.append(concatenate / np.sqrt(concatenate.T@concatenate)) 
+            
+            # Test de la normalisation L2-Hys : à voir si on a des meilleurs perfs avec ça ou pas 
+            
+            norm = np.sqrt(np.sum(concatenate ** 2))
+            if norm != 0.0: # Éviter les divisions par zéro et donc les blocks entiers de nan
+                concatenate = concatenate / norm 
+            
+            concatenate[concatenate > 0.2] = 0
+            
+            norm = np.sqrt(np.sum(concatenate ** 2))
+            if norm != 0.0: # Éviter les divisions par zéro et donc les blocks entiers de nan
+                concatenate = concatenate / norm
+                
+            HOG_features.append(concatenate)
     
-    return HOG_features
+    
+    nb_features = len(HOG_features)
+    shape_features = HOG_features[0].shape[0]
+    
+    hog_features = np.zeros(nb_features*shape_features, dtype = 'float64')
+    
+    for i,feature in enumerate(HOG_features):
+        hog_features[i*shape_features:(i+1)*shape_features] = HOG_features[i]
+    
+    # Essayer de voir si ça change les perfs qu'on renormalise à la fin avec toutes les features ensemble
+    # pour envoyer un vecteur unitaire dans le truc... À voir
+    
+    return hog_features
 
 #%% Descripteurs Haar
 
@@ -197,15 +298,15 @@ def ii(img):
 
     """
     # Taille de l'image 
-    m,n = img.shape()
+    m,n = img.shape
     
-    # Matrice qui sera l'image intégrale de l'image 
-    I = np.empty((m+1,n+1), dtype = float)
+    # Matrice qui sera l'image intégrale de l'image avec zero-padding pour l'initialisation
+    I = np.zeros((m+1,n+1), dtype = "float64")
     
     # Boucle sur les lignes
     for i in range(1,m+1):
         # Accumulation sur les colonnes (à ligne fixe)
-        s = np.empty((1,n+1), dtype = float)
+        s = np.zeros((1,n+1), dtype = "float64")
         
         # Boucle sur les colonnes
         for j in range(1,n+1):
@@ -214,7 +315,7 @@ def ii(img):
             s[0,j] = img[i-1,j-1] + s[0,j-1]
             I[i,j] = I[i-1,j] + s[0,j]
     
-    return I
+    return I[1:,1:]
 
 @numba.njit
 def sii(img):
@@ -231,15 +332,15 @@ def sii(img):
 
     """
     # Taille de l'image 
-    m,n = img.shape()
+    m,n = img.shape
     
     # Matrice qui sera l'image intégrale au carré de l'image avec zero-padding 
-    I = np.empty((m+1,n+1), dtype = float)
+    I = np.zeros((m+1,n+1), dtype = "float64")
     
     # Boucle sur les lignes
     for i in range(1,m+1):
         # Accumulation sur les colonnes (à ligne fixe)
-        s = np.empty((1,n+1), dtype = float)
+        s = np.zeros((1,n+1), dtype = "float64")
     
         # Boucle sur les colonnes
         for j in range(1,n+1):
@@ -248,7 +349,7 @@ def sii(img):
             s[0,j] = img[i-1,j-1]**2 + s[0,j-1]
             I[i,j] = I[i-1,j] + s[0,j]
             
-    return I
+    return I[1:,1:]
 
 #%% Fonction qui calcule les caractéristiques de Haar sur des images 64x64 
 
@@ -266,8 +367,8 @@ def Haar_features(I):
         Vecteur des features (normalisé) déterminé avec les filtres de Haar
     """
     # Vecteur nul qui contiendra les features de l'image 
-    Features = np.empty((928,928), dtype=float)
-    
+    Features = np.zeros(928, dtype= "float64")
+
     # Récupération des images intégrales et images intégrales carrées
     
     Ii = ii(I)
@@ -303,10 +404,10 @@ def Haar_features(I):
         # Boucle sur les colonnes des sous-fenêtres 24x24
         for j in range(k_24):
             # Calcul des features pour les fenêtres rectangulaires verticales 
-            mu_white = (1/Area_rhv_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 24,pos_y + 12] - Ii[pos_x,pos_y + 12] - Ii[pos_x+24,pos_y])
-            mu_black = (1/Area_rhv_24)*(Ii[pos_x,pos_y + 12] + Ii[pos_x + 24,pos_y + 24] - Ii[pos_x,pos_y + 24] - Ii[pos_x + 24, pos_y + 12])
-            E_white = (1/Area_rhv_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 24,pos_y + 12] - Isi[pos_x,pos_y + 12] - Isi[pos_x+24,pos_y])
-            E_black = (1/Area_rhv_24)*(Isi[pos_x,pos_y + 12] + Isi[pos_x + 24,pos_y + 24] - Isi[pos_x,pos_y + 24] - Isi[pos_x + 24, pos_y + 12])
+            mu_white = (1/Area_rhv_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 23,pos_y + 11] - Ii[pos_x,pos_y + 11] - Ii[pos_x+23,pos_y])
+            mu_black = (1/Area_rhv_24)*(Ii[pos_x,pos_y + 11] + Ii[pos_x + 23,pos_y + 23] - Ii[pos_x,pos_y + 23] - Ii[pos_x + 23, pos_y + 11])
+            E_white = (1/Area_rhv_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 23,pos_y + 11] - Isi[pos_x,pos_y + 11] - Isi[pos_x+23,pos_y])
+            E_black = (1/Area_rhv_24)*(Isi[pos_x,pos_y + 11] + Isi[pos_x + 23,pos_y + 23] - Isi[pos_x,pos_y + 23] - Isi[pos_x + 23, pos_y + 11])
             
             sig_white = E_white - mu_white**2 
             sig_black = E_black - mu_black**2
@@ -314,10 +415,10 @@ def Haar_features(I):
 
             # Calcul des features pour les fenêtres rectangulaires horizontales 
             
-            mu_white = (1/Area_rhv_24)*(Ii[pos_x + 12,pos_y] + Ii[pos_x + 24,pos_y + 24] - Ii[pos_x + 12,pos_y + 24] - Ii[pos_x + 24,pos_y])
-            mu_black = (1/Area_rhv_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 12,pos_y + 24] - Ii[pos_x,pos_y + 24] - Ii[pos_x + 12, pos_y])
-            E_white = (1/Area_rhv_24)*(Isi[pos_x + 12,pos_y] + Isi[pos_x + 24,pos_y + 24] - Isi[pos_x + 12,pos_y + 24] - Isi[pos_x + 24,pos_y])
-            E_black = (1/Area_rhv_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 12,pos_y + 24] - Isi[pos_x,pos_y + 24] - Isi[pos_x + 12, pos_y])
+            mu_white = (1/Area_rhv_24)*(Ii[pos_x + 11,pos_y] + Ii[pos_x + 23,pos_y + 23] - Ii[pos_x + 11,pos_y + 23] - Ii[pos_x + 23,pos_y])
+            mu_black = (1/Area_rhv_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 11,pos_y + 23] - Ii[pos_x,pos_y + 23] - Ii[pos_x + 11, pos_y])
+            E_white = (1/Area_rhv_24)*(Isi[pos_x + 11,pos_y] + Isi[pos_x + 23,pos_y + 23] - Isi[pos_x + 11,pos_y + 23] - Isi[pos_x + 23,pos_y])
+            E_black = (1/Area_rhv_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 11,pos_y + 23] - Isi[pos_x,pos_y + 23] - Isi[pos_x + 11, pos_y])
             
             sig_white = E_white - mu_white**2 
             sig_black = E_black - mu_black**2
@@ -325,12 +426,12 @@ def Haar_features(I):
             
             # Calcul des features pour les fenêtres tri-rectangulaires  
             
-            mu_white_1 = (1/Area_triple_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 24, pos_y + 8] - Ii[pos_x,pos_y + 8] - Ii[pos_x+24,pos_y]) 
-            mu_white_2 = (1/Area_triple_24)*(Ii[pos_x,pos_y+16] + Ii[pos_x + 24, pos_y + 24] - Ii[pos_x,pos_y + 24] - Ii[pos_x+24,pos_y + 16])
-            mu_black = (1/Area_triple_24)*(Ii[pos_x,pos_y+8] + Ii[pos_x + 24, pos_y + 16] - Ii[pos_x,pos_y + 16] - Ii[pos_x+24,pos_y + 8])
-            E_white_1 = (1/Area_triple_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 24, pos_y + 8] - Isi[pos_x,pos_y + 8] - Isi[pos_x+24,pos_y]) 
-            E_white_2 = (1/Area_triple_24)*(Isi[pos_x,pos_y+16] + Isi[pos_x + 24, pos_y + 24] - Isi[pos_x,pos_y + 24] - Isi[pos_x+24,pos_y + 16])
-            E_black = (1/Area_triple_24)*(Isi[pos_x,pos_y+8] + Isi[pos_x + 24, pos_y + 16] - Isi[pos_x,pos_y + 16] - Isi[pos_x+24,pos_y + 8])
+            mu_white_1 = (1/Area_triple_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 23, pos_y + 7] - Ii[pos_x,pos_y + 7] - Ii[pos_x+23,pos_y]) 
+            mu_white_2 = (1/Area_triple_24)*(Ii[pos_x,pos_y+15] + Ii[pos_x + 23, pos_y + 23] - Ii[pos_x,pos_y + 23] - Ii[pos_x+23,pos_y + 15])
+            mu_black = (1/Area_triple_24)*(Ii[pos_x,pos_y+7] + Ii[pos_x + 23, pos_y + 15] - Ii[pos_x,pos_y + 15] - Ii[pos_x+23,pos_y + 7])
+            E_white_1 = (1/Area_triple_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 23, pos_y + 7] - Isi[pos_x,pos_y + 7] - Isi[pos_x+23,pos_y]) 
+            E_white_2 = (1/Area_triple_24)*(Isi[pos_x,pos_y+15] + Isi[pos_x + 23, pos_y + 23] - Isi[pos_x,pos_y + 23] - Isi[pos_x+23,pos_y + 15])
+            E_black = (1/Area_triple_24)*(Isi[pos_x,pos_y+7] + Isi[pos_x + 23, pos_y + 15] - Isi[pos_x,pos_y + 15] - Isi[pos_x+23,pos_y + 7])
             
             sig_white_1 = E_white_1 - mu_white_1**2 
             sig_white_2 = E_white_2 - mu_white_2**2
@@ -339,14 +440,14 @@ def Haar_features(I):
             
             # Calcul des features pour les fenêtres quadri-rectangulaires  
             
-            mu_white_1 = (1/Area_quadruple_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 12,pos_y + 12] - Ii[pos_x,pos_y + 12] - Ii[pos_x + 12,pos_y])
-            mu_white_2 = (1/Area_quadruple_24)*(Ii[pos_x+12,pos_y+12] + Ii[pos_x+24,pos_y+24] - Ii[pos_x+12,pos_y+24] - Ii[pos_x+24,pos_y + 12])
-            mu_black_1 = (1/Area_quadruple_24)*(Ii[pos_x,pos_y+12] + Ii[pos_x+12,pos_y+24] - Ii[pos_x,pos_y+24] - Ii[pos_x+12,pos_y+12])
-            mu_black_2 = (1/Area_quadruple_24)*(Ii[pos_x+12,pos_y] + Ii[pos_x+24,pos_y+12] - Ii[pos_x+12,pos_y+12] - Ii[pos_x+24,pos_y])
-            E_white_1 = (1/Area_quadruple_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 12,pos_y + 12] - Isi[pos_x,pos_y + 12] - Isi[pos_x + 12,pos_y])
-            E_white_2 = (1/Area_quadruple_24)*(Isi[pos_x+12,pos_y+12] + Isi[pos_x+24,pos_y+24] - Isi[pos_x+12,pos_y+24] - Isi[pos_x+24,pos_y + 12])
-            E_black_1 = (1/Area_quadruple_24)*(Isi[pos_x,pos_y+12] + Isi[pos_x+12,pos_y+24] - Isi[pos_x,pos_y+24] - Isi[pos_x+12,pos_y+12])
-            E_black_2 = (1/Area_quadruple_24)*(Isi[pos_x+12,pos_y] + Isi[pos_x+24,pos_y+12] - Isi[pos_x+12,pos_y+12] - Isi[pos_x+24,pos_y])
+            mu_white_1 = (1/Area_quadruple_24)*(Ii[pos_x,pos_y] + Ii[pos_x + 11,pos_y + 11] - Ii[pos_x,pos_y + 11] - Ii[pos_x + 11,pos_y])
+            mu_white_2 = (1/Area_quadruple_24)*(Ii[pos_x+11,pos_y+11] + Ii[pos_x+23,pos_y+23] - Ii[pos_x+11,pos_y+23] - Ii[pos_x+23,pos_y + 11])
+            mu_black_1 = (1/Area_quadruple_24)*(Ii[pos_x,pos_y+11] + Ii[pos_x+11,pos_y+23] - Ii[pos_x,pos_y+23] - Ii[pos_x+11,pos_y+11])
+            mu_black_2 = (1/Area_quadruple_24)*(Ii[pos_x+11,pos_y] + Ii[pos_x+23,pos_y+11] - Ii[pos_x+11,pos_y+11] - Ii[pos_x+23,pos_y])
+            E_white_1 = (1/Area_quadruple_24)*(Isi[pos_x,pos_y] + Isi[pos_x + 11,pos_y + 11] - Isi[pos_x,pos_y + 11] - Isi[pos_x + 11,pos_y])
+            E_white_2 = (1/Area_quadruple_24)*(Isi[pos_x+11,pos_y+11] + Isi[pos_x+23,pos_y+23] - Isi[pos_x+11,pos_y+23] - Isi[pos_x+23,pos_y + 11])
+            E_black_1 = (1/Area_quadruple_24)*(Isi[pos_x,pos_y+11] + Isi[pos_x+11,pos_y+23] - Isi[pos_x,pos_y+23] - Isi[pos_x+11,pos_y+11])
+            E_black_2 = (1/Area_quadruple_24)*(Isi[pos_x+11,pos_y] + Isi[pos_x+23,pos_y+11] - Isi[pos_x+11,pos_y+11] - Isi[pos_x+23,pos_y])
             
             sig_white_1 = E_white_1 - mu_white_1**2 
             sig_white_2 = E_white_2 - mu_white_2**2 
@@ -367,10 +468,10 @@ def Haar_features(I):
         # Boucle sur les colonnes des sous-fenêtres 12x12
         for j in range(k_12):
             # Calcul des features pour les fenêtres rectangulaires verticales 
-            mu_white = (1/Area_rhv_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 12,pos_y + 6] - Ii[pos_x,pos_y + 6] - Ii[pos_x+12,pos_y])
-            mu_black = (1/Area_rhv_12)*(Ii[pos_x,pos_y + 6] + Ii[pos_x + 12,pos_y + 12] - Ii[pos_x,pos_y + 12] - Ii[pos_x + 12, pos_y + 6])
-            E_white = (1/Area_rhv_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 12,pos_y + 6] - Isi[pos_x,pos_y + 6] - Isi[pos_x+12,pos_y])
-            E_black = (1/Area_rhv_12)*(Isi[pos_x,pos_y + 6] + Isi[pos_x + 12,pos_y + 12] - Isi[pos_x,pos_y + 12] - Isi[pos_x + 12, pos_y + 6])
+            mu_white = (1/Area_rhv_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 11,pos_y + 5] - Ii[pos_x,pos_y + 5] - Ii[pos_x+11,pos_y])
+            mu_black = (1/Area_rhv_12)*(Ii[pos_x,pos_y + 5] + Ii[pos_x + 11,pos_y + 11] - Ii[pos_x,pos_y + 11] - Ii[pos_x + 11, pos_y + 5])
+            E_white = (1/Area_rhv_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 11,pos_y + 5] - Isi[pos_x,pos_y + 5] - Isi[pos_x+11,pos_y])
+            E_black = (1/Area_rhv_12)*(Isi[pos_x,pos_y + 5] + Isi[pos_x + 11,pos_y + 11] - Isi[pos_x,pos_y + 11] - Isi[pos_x + 11, pos_y + 5])
             
             sig_white = E_white - mu_white**2 
             sig_black = E_black - mu_black**2
@@ -378,10 +479,10 @@ def Haar_features(I):
 
             # Calcul des features pour les fenêtres rectangulaires horizontales 
             
-            mu_white = (1/Area_rhv_12)*(Ii[pos_x + 6,pos_y] + Ii[pos_x + 12,pos_y + 12] - Ii[pos_x + 6,pos_y + 12] - Ii[pos_x + 12,pos_y])
-            mu_black = (1/Area_rhv_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 6,pos_y + 12] - Ii[pos_x,pos_y + 12] - Ii[pos_x + 6, pos_y])
-            E_white = (1/Area_rhv_12)*(Isi[pos_x + 6,pos_y] + Isi[pos_x + 12,pos_y + 12] - Isi[pos_x + 6,pos_y + 12] - Isi[pos_x + 12,pos_y])
-            E_black = (1/Area_rhv_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 6,pos_y + 12] - Isi[pos_x,pos_y + 12] - Isi[pos_x + 6, pos_y])
+            mu_white = (1/Area_rhv_12)*(Ii[pos_x + 5,pos_y] + Ii[pos_x + 11,pos_y + 11] - Ii[pos_x + 5,pos_y + 11] - Ii[pos_x + 11,pos_y])
+            mu_black = (1/Area_rhv_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 5,pos_y + 11] - Ii[pos_x,pos_y + 11] - Ii[pos_x + 5, pos_y])
+            E_white = (1/Area_rhv_12)*(Isi[pos_x + 5,pos_y] + Isi[pos_x + 11,pos_y + 11] - Isi[pos_x + 5,pos_y + 11] - Isi[pos_x + 11,pos_y])
+            E_black = (1/Area_rhv_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 5,pos_y + 11] - Isi[pos_x,pos_y + 11] - Isi[pos_x + 5, pos_y])
             
             sig_white = E_white - mu_white**2 
             sig_black = E_black - mu_black**2
@@ -389,12 +490,12 @@ def Haar_features(I):
             
             # Calcul des features pour les fenêtres tri-rectangulaires  
             
-            mu_white_1 = (1/Area_triple_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 12, pos_y + 4] - Ii[pos_x,pos_y + 4] - Ii[pos_x+12,pos_y]) 
-            mu_white_2 = (1/Area_triple_12)*(Ii[pos_x,pos_y+8] + Ii[pos_x + 12, pos_y + 12] - Ii[pos_x,pos_y + 12] - Ii[pos_x+12,pos_y + 8])
-            mu_black = (1/Area_triple_12)*(Ii[pos_x,pos_y+4] + Ii[pos_x + 12, pos_y + 8] - Ii[pos_x,pos_y + 8] - Ii[pos_x+12,pos_y + 4])
-            E_white_1 = (1/Area_triple_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 12, pos_y + 4] - Isi[pos_x,pos_y + 4] - Isi[pos_x+12,pos_y]) 
-            E_white_2 = (1/Area_triple_12)*(Isi[pos_x,pos_y+8] + Isi[pos_x + 12, pos_y + 12] - Isi[pos_x,pos_y + 12] - Isi[pos_x+12,pos_y + 8])
-            E_black = (1/Area_triple_12)*(Isi[pos_x,pos_y+4] + Isi[pos_x + 12, pos_y + 8] - Isi[pos_x,pos_y + 8] - Isi[pos_x+12,pos_y + 4])
+            mu_white_1 = (1/Area_triple_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 11, pos_y + 4] - Ii[pos_x,pos_y + 4] - Ii[pos_x+11,pos_y]) 
+            mu_white_2 = (1/Area_triple_12)*(Ii[pos_x,pos_y+7] + Ii[pos_x + 11, pos_y + 11] - Ii[pos_x,pos_y + 11] - Ii[pos_x+11,pos_y + 7])
+            mu_black = (1/Area_triple_12)*(Ii[pos_x,pos_y+4] + Ii[pos_x + 11, pos_y + 7] - Ii[pos_x,pos_y + 7] - Ii[pos_x+11,pos_y + 4])
+            E_white_1 = (1/Area_triple_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 11, pos_y + 4] - Isi[pos_x,pos_y + 4] - Isi[pos_x+11,pos_y]) 
+            E_white_2 = (1/Area_triple_12)*(Isi[pos_x,pos_y+7] + Isi[pos_x + 11, pos_y + 11] - Isi[pos_x,pos_y + 11] - Isi[pos_x+11,pos_y + 7])
+            E_black = (1/Area_triple_12)*(Isi[pos_x,pos_y+4] + Isi[pos_x + 11, pos_y + 7] - Isi[pos_x,pos_y + 7] - Isi[pos_x+11,pos_y + 4])
             
             sig_white_1 = E_white_1 - mu_white_1**2 
             sig_white_2 = E_white_2 - mu_white_2**2
@@ -403,14 +504,14 @@ def Haar_features(I):
             
             # Calcul des features pour les fenêtres quadri-rectangulaires  
             
-            mu_white_1 = (1/Area_quadruple_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 6,pos_y + 6] - Ii[pos_x,pos_y + 6] - Ii[pos_x + 6,pos_y])
-            mu_white_2 = (1/Area_quadruple_12)*(Ii[pos_x+6,pos_y+6] + Ii[pos_x+12,pos_y+12] - Ii[pos_x+6,pos_y+12] - Ii[pos_x+12,pos_y + 6])
-            mu_black_1 = (1/Area_quadruple_12)*(Ii[pos_x,pos_y+6] + Ii[pos_x+6,pos_y+12] - Ii[pos_x,pos_y+12] - Ii[pos_x+6,pos_y+6])
-            mu_black_2 = (1/Area_quadruple_12)*(Ii[pos_x+6,pos_y] + Ii[pos_x+12,pos_y+6] - Ii[pos_x+6,pos_y+6] - Ii[pos_x+12,pos_y])
-            E_white_1 = (1/Area_quadruple_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 6,pos_y + 6] - Isi[pos_x,pos_y + 6] - Isi[pos_x + 6,pos_y])
-            E_white_2 = (1/Area_quadruple_12)*(Isi[pos_x+6,pos_y+6] + Isi[pos_x+12,pos_y+12] - Isi[pos_x+6,pos_y+12] - Isi[pos_x+12,pos_y + 6])
-            E_black_1 = (1/Area_quadruple_12)*(Isi[pos_x,pos_y+6] + Isi[pos_x+6,pos_y+12] - Isi[pos_x,pos_y+12] - Isi[pos_x+6,pos_y+6])
-            E_black_2 = (1/Area_quadruple_12)*(Isi[pos_x+6,pos_y] + Isi[pos_x+12,pos_y+6] - Isi[pos_x+6,pos_y+6] - Isi[pos_x+12,pos_y])
+            mu_white_1 = (1/Area_quadruple_12)*(Ii[pos_x,pos_y] + Ii[pos_x + 5,pos_y + 5] - Ii[pos_x,pos_y + 5] - Ii[pos_x + 5,pos_y])
+            mu_white_2 = (1/Area_quadruple_12)*(Ii[pos_x+5,pos_y+5] + Ii[pos_x+11,pos_y+11] - Ii[pos_x+5,pos_y+11] - Ii[pos_x+11,pos_y + 5])
+            mu_black_1 = (1/Area_quadruple_12)*(Ii[pos_x,pos_y+5] + Ii[pos_x+5,pos_y+11] - Ii[pos_x,pos_y+11] - Ii[pos_x+5,pos_y+5])
+            mu_black_2 = (1/Area_quadruple_12)*(Ii[pos_x+5,pos_y] + Ii[pos_x+11,pos_y+5] - Ii[pos_x+5,pos_y+5] - Ii[pos_x+11,pos_y])
+            E_white_1 = (1/Area_quadruple_12)*(Isi[pos_x,pos_y] + Isi[pos_x + 5,pos_y + 5] - Isi[pos_x,pos_y + 5] - Isi[pos_x + 5,pos_y])
+            E_white_2 = (1/Area_quadruple_12)*(Isi[pos_x+5,pos_y+5] + Isi[pos_x+11,pos_y+11] - Isi[pos_x+5,pos_y+11] - Isi[pos_x+11,pos_y + 5])
+            E_black_1 = (1/Area_quadruple_12)*(Isi[pos_x,pos_y+5] + Isi[pos_x+5,pos_y+11] - Isi[pos_x,pos_y+11] - Isi[pos_x+5,pos_y+5])
+            E_black_2 = (1/Area_quadruple_12)*(Isi[pos_x+5,pos_y] + Isi[pos_x+11,pos_y+5] - Isi[pos_x+5,pos_y+5] - Isi[pos_x+11,pos_y])
             
             sig_white_1 = E_white_1 - mu_white_1**2 
             sig_white_2 = E_white_2 - mu_white_2**2 
@@ -423,7 +524,10 @@ def Haar_features(I):
         pos_x += 4
     
     # Normalisation des features 
-    Features = Features / (np.sqrt(Features.T @ Features))
+    norm = np.sqrt(np.sum(Features ** 2))
+    if norm != 0.0:
+        Features = Features / norm
+    
     return Features 
 
 #%% SVM hard margin avec UZAWA
@@ -1085,7 +1189,7 @@ def Classification_Haar(Img, model,arg):
 
 #%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
 
-def cam(mu,b,kernel,X,y):
+def cam(model, config):
     # Ouvrir la caméra (0 si caméra principale)
     cap = cv2.VideoCapture(0)
     
@@ -1106,12 +1210,14 @@ def cam(mu,b,kernel,X,y):
             print("Erreur: Impossible de lire l'image depuis la caméra.")
             break
         
+        time.sleep(1) # Regarde toutes les 0.5 secondes si on est en présence d'un visage ou non  
+        
         # Capture de l'image pour la fonction test 
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        img_test = cv2.resize(img,(32,32)).reshape(-1, order = 'C').astype("float64")
-        img_test = img_test*fac + 0.01 
-        print(str(f_D(img_test,X,mu,y,kernel,b)))
-        test = np.sign(f_D(img_test,X,mu,y,kernel,b))
+        img_test = cv2.resize(img,(64,64)).astype("float64")
+        x = config(img_test, None)
+            
+        test = np.sign(SVMC.decision_function(model, x))
         
         if test == 1 :
             # position où on écrit le texte

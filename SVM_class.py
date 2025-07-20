@@ -301,11 +301,17 @@ def gaussian_kernel(x, y, args):
     return result
 
 @numba.njit
-def linear_kernel(x, y, b=1):
+def linear_kernel(x, y, args = 1):
     """Returns the linear combination of arrays `x` and `y` with
-    the optional bias term `b` (set to 1 by default)."""
+    the optional bias term `b` ( = args ) (set to 1 by default)."""
     
-    return x @ y.T + b # Note the @ operator for matrix multiplication
+    return x @ y.T + args # Note the @ operator for matrix multiplication
+
+@numba.njit
+def poly_kernel(x,y,args):
+    c,d = args 
+    result = (x @ y.T + c)**d
+    return result
 
 @numba.njit 
 def update(G,i,non_opt):

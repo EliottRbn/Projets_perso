@@ -1664,7 +1664,7 @@ from sklearn.preprocessing import StandardScaler
 def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
         """Plots the model's decision boundary on the input axes object.
         Range of decision boundary grid is determined by the training data.
-        Returns decision boundary grid and axes object (`grid`, `ax`)."""
+        Returns decision boundary grid and axes object (`grid`, `ax`). """
         
         # Generate coordinate grid of shape [resolution x resolution]
         # and evaluate the model over the entire space
@@ -1727,7 +1727,7 @@ from sklearn.preprocessing import StandardScaler
 def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
         """Plots the model's decision boundary on the input axes object.
         Range of decision boundary grid is determined by the training data.
-        Returns decision boundary grid and axes object (`grid`, `ax`)."""
+        Returns decision boundary grid and axes object (`grid`, `ax`). """
         
         # Generate coordinate grid of shape [resolution x resolution]
         # and evaluate the model over the entire space
@@ -1789,6 +1789,80 @@ output = SVMC.train(model_test, K_test, sig)
 fig, ax = plt.subplots()
 grid, ax = plot_decision_boundary(output, ax, sig = sig)
 
+#%% Test des perf avec descripteurs de Haar, de HOG, les deux couplés, avec noyau gaussien et sans noyau gaussien 
+
+X_raw,Y_raw = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.raw_data)
+X_HOG,Y_HOG = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_data)
+X_Haar,Y_Haar = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.Haar_data)
+X_mix,Y_mix = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_Haar_data)
+
+### Paramètres des SMO ### 
+
+alpha = 0.5
+mu = np.zeros(X_raw.shape[0])
+b = 0
+errors = np.zeros(X_raw.shape[0]) 
+eps = 1e-2 
+tol = 1e-2
+args = (0,1)
+
+### Sans noyau gaussien pour débuter i.e. SVM Linéaires ###
+
+## Initialisation des SVM ##
+
+model_raw = SVMC.SMOModel(X_raw, Y_raw, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_HOG = SVMC.SMOModel(X_HOG, Y_HOG, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_Haar = SVMC.SMOModel(X_Haar, Y_Haar, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_mix = SVMC.SMOModel(X_mix, Y_mix, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+
+## Initialisation des erreurs ## 
+
+initial_error = SVMC.decision_function(model_raw, X_raw) - model_raw.y
+model_raw.errors = initial_error
+
+initial_error = SVMC.decision_function(model_HOG, X_HOG) - model_HOG.y
+model_HOG.errors = initial_error
+
+initial_error = SVMC.decision_function(model_Haar, X_Haar) - model_Haar.y
+model_Haar.errors = initial_error
+
+initial_error = SVMC.decision_function(model_mix, X_mix) - model_mix.y
+model_mix.errors = initial_error
+
+## Training des models ## 
+
+model_raw = SVMC.train(model_raw)
+model_HOG = SVMC.train(model_HOG)
+model_Haar = SVMC.train(model_Haar)
+model_mix = SVMC.train(model_mix)
+
+import importlib 
+importlib.reload(SVM)
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_mix, model_mix.X)
+print("Résultats pour le model avec le mixte Haar + HOG : \n")
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+
+# Bon, pas encore fou ça 
+
+SVM.cam(model_HOG,SVM.HOG_data)
+
+# Test avec un BD train 
+
+X_HOG_train,Y_HOG_train = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = SVM.HOG_data)
+X_HOG_train = np.concatenate((X_HOG_train[500:1000,:],X_HOG_train[1500:,:]))
+Y_HOG_train = np.concatenate((Y_HOG_train[500:1000],Y_HOG_train[1500:]))
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_HOG, X_HOG_train)
+print("Résultats pour le model avec le HOG sur une BD test : \n")
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+
 #%% Endroit momentanément poubelle 
 
 # A = np.argwhere(model.mu[:,0] > 1e-15)
@@ -1811,4 +1885,4 @@ grid, ax = plot_decision_boundary(output, ax, sig = sig)
 #     if np.sign(esti)*Y[i] > 0:
 #         bon += 1 
         
-# ratio = (bon/np.shape(A)[0])*100
+# ratio = (bon/np.shape(A)[0])*100 
