@@ -18,7 +18,432 @@ from sklearn.datasets import make_moons
 from sklearn.preprocessing import StandardScaler
 import importlib
 
+#%% AVERTISSEMENT
+
+
+
+""" 
+
+Les tests les plus récents sont les suivants ainsi que ceux présents dans test_descripteurs.py. 
+La convention de mes fonctions a beaucoup évolué au fil du projet donc certains tests ne fonctionnent plus en raison 
+d'arguments de fonctions qui ont été changés.
+
 """
+
+
+
+#%% Test de l'algo sur un exemple du site : c'est validé ! 
+
+from sklearn.datasets import make_moons
+from sklearn.preprocessing import StandardScaler
+
+def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
+        """Plots the model's decision boundary on the input axes object.
+        Range of decision boundary grid is determined by the training data.
+        Returns decision boundary grid and axes object (`grid`, `ax`). """
+        
+        # Generate coordinate grid of shape [resolution x resolution]
+        # and evaluate the model over the entire space
+        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
+        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
+        grid = [[SVMC.decision_function(model, np.array([xr, yr])) for xr in xrange] for yr in yrange]
+        grid = np.array(grid).reshape(len(xrange), len(yrange))
+        
+        # Plot decision contours using grid and
+        # make a scatter plot of training data
+        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
+                   linestyles=('--', '-', '--'), colors=colors)
+        ax.scatter(model.X[:,0], model.X[:,1],
+                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
+        
+        # Plot support vectors (non-zero alphas)
+        # as circled points (linewidth > 0)
+        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
+        ax.scatter(model.X[mask,0], model.X[mask,1],
+                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
+        
+        return grid, ax
+
+X_train, y_train = make_moons(n_samples=500, noise=0.1,
+                        random_state=1)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train, y_train)
+y_train[y_train == 0] = -1
+
+y_train = y_train
+
+# Set model parameters and initial values
+alpha = 1.0
+m = len(X_train_scaled)
+initial_mu = np.zeros(m)
+initial_b = 0.0
+
+# Instantiate model
+model_test = SVMC.SMOModel(X = X_train_scaled, y = y_train, alpha = alpha, kernel = SVMC.gaussian_kernel,
+                 mu = initial_mu, b = initial_b, errors = np.zeros(m), eps = 1e-2, tol = 1e-2, args = 0.5)
+
+# Initialize error cache
+initial_error = SVMC.decision_function(model_test, X_train_scaled) - model_test.y
+
+# initial_error = decision_function2(model_test.mu, model_test.y, model_test.kernel,
+                                  # model_test.X, model_test.X, model_test.b) - model_test.y
+model_test.errors = initial_error
+output = SVMC.train(model_test)
+fig, ax = plt.subplots()
+grid, ax = plot_decision_boundary(output, ax, sig = model_test.args)
+
+# Test de la fonction metric modifiée 
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_test, X_train_scaled)
+
+#%% Test de l'algo des SMO en ayant fait pas mal de modifications 
+
+from sklearn.datasets import make_moons
+from sklearn.preprocessing import StandardScaler
+
+def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
+        """Plots the model's decision boundary on the input axes object.
+        Range of decision boundary grid is determined by the training data.
+        Returns decision boundary grid and axes object (`grid`, `ax`). """
+        
+        # Generate coordinate grid of shape [resolution x resolution]
+        # and evaluate the model over the entire space
+        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
+        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
+        grid = [[SVMC.decision_function2(model.mu, model.y,
+                                   model.X, np.array([xr, yr]),
+                                   model.b, SVMC.gaussian_kernel, sig) for xr in xrange] for yr in yrange]
+        grid = np.array(grid).reshape(len(xrange), len(yrange))
+        
+        # Plot decision contours using grid and
+        # make a scatter plot of training data
+        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
+                   linestyles=('--', '-', '--'), colors=colors)
+        ax.scatter(model.X[:,0], model.X[:,1],
+                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
+        
+        # Plot support vectors (non-zero alphas)
+        # as circled points (linewidth > 0)
+        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
+        ax.scatter(model.X[mask,0], model.X[mask,1],
+                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
+        
+        return grid, ax
+
+X_train, y_train = make_moons(n_samples=500, noise=0.1,
+                        random_state=1)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train, y_train)
+y_train[y_train == 0] = -1
+
+y_train = y_train.reshape(-1,1)
+
+# Set model parameters and initial values
+alpha = 1.0
+m = len(X_train_scaled)
+initial_mu = np.zeros((m,1))
+initial_b = 0.0
+
+# Instantiate model
+model_test = SVMC.SMOModel(X_train_scaled, y_train, alpha, SVMC.gaussian_kernel,
+                 initial_mu, initial_b, np.zeros(m), 1e-3, 1e-2, args = 0.5)
+
+
+sig = 0.5
+for j in range(len(X_train_scaled)):
+    # initial_error = SVMC.decision_function2(model.mu, model.y, model.X, model.X[j,:], model.b, SVM.kern_poly, (1.5,3)) - model.y[j][0]
+    initial_error = SVMC.decision_function2(model_test.mu, model_test.y, model_test.X, model_test.X[j,:],
+                                            model_test.b, SVMC.gaussian_kernel, sig) - model_test.y[j][0]
+    model_test.errors[j] = initial_error
+# Initialize error cache
+# initial_error = decision_function2(model_test.mu, model_test.y, model_test.kernel,
+                                  # model_test.X, model_test.X, model_test.b) - model_test.y
+
+
+K_test = SVM.Gramm(SVM.gauss, X_train_scaled, sig)
+# model.errors = initial_error
+output = SVMC.train(model_test, K_test, sig)
+fig, ax = plt.subplots()
+grid, ax = plot_decision_boundary(output, ax, sig = sig)
+
+#%% Test des perf avec descripteurs de Haar, de HOG, les deux couplés, avec noyau gaussien et sans noyau gaussien 
+
+X_raw,Y_raw = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.raw_data)
+X_HOG,Y_HOG = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_data)
+X_Haar,Y_Haar = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.Haar_data)
+X_mix,Y_mix = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_Haar_data)
+
+### Paramètres des SMO ### 
+
+alpha = 0.8
+mu = np.zeros(X_raw.shape[0])
+b = 0
+errors = np.zeros(X_raw.shape[0]) 
+eps = 1e-2 
+tol = 1e-2
+args = (0,1)
+
+### Sans noyau gaussien pour débuter i.e. SVM Linéaires ###
+
+## Initialisation des SVM ##
+
+model_raw = SVMC.SMOModel(X_raw, Y_raw, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_HOG = SVMC.SMOModel(X_HOG, Y_HOG, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_Haar = SVMC.SMOModel(X_Haar, Y_Haar, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_mix = SVMC.SMOModel(X_mix, Y_mix, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+
+## Initialisation des erreurs ## 
+
+initial_error = SVMC.decision_function(model_raw, X_raw) - model_raw.y
+model_raw.errors = initial_error
+
+initial_error = SVMC.decision_function(model_HOG, X_HOG) - model_HOG.y
+model_HOG.errors = initial_error
+
+initial_error = SVMC.decision_function(model_Haar, X_Haar) - model_Haar.y
+model_Haar.errors = initial_error
+
+initial_error = SVMC.decision_function(model_mix, X_mix) - model_mix.y
+model_mix.errors = initial_error
+
+## Training des models ## 
+
+model_raw = SVMC.train(model_raw)
+model_HOG = SVMC.train(model_HOG)
+model_Haar = SVMC.train(model_Haar)
+model_mix = SVMC.train(model_mix)
+
+import importlib 
+importlib.reload(SVM)
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_HOG, model_HOG.X)
+print("Résultats pour le model avec HOG : \n")
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+
+# Bon, pas encore fou ça 
+
+SVM.cam(model_HOG,SVM.HOG_data)
+
+# Test avec un BD train 
+
+X_HOG_test,_ = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = SVM.HOG_data)
+X_HOG_test = np.concatenate((X_HOG_test[500:1000,:],X_HOG_test[1500:,:]))
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_HOG, X_HOG_test)
+print("Résultats pour le model avec le Haar sur une BD test : \n")
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+
+#%% Sauvegarde du HOG avec alpha = 0.6, il était pas mal
+
+# --- Sauvegarde ---
+with open("model_HOG_lineaire_0.6.pkl", "wb") as f:
+    pickle.dump(model_HOG, f)
+
+# --- Chargement ---
+with open("model_HOG_lineaire_0.6.pkl", "rb") as f:
+    model_HOG = pickle.load(f)
+
+#%% Test de nos SVM & features avec le padding ajouté aux images 
+
+X_raw,Y_raw = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.raw_data)
+X_HOG,Y_HOG = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_data)
+X_Haar,Y_Haar = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.Haar_data)
+X_mix,Y_mix = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_Haar_data)
+
+### Paramètres des SMO ### 
+
+alpha = 0.8
+mu = np.zeros(X_raw.shape[0])
+b = 0
+errors = np.zeros(X_raw.shape[0]) 
+eps = 1e-2 
+tol = 1e-2
+args = (0,1)
+
+### Sans noyau gaussien pour débuter i.e. SVM Linéaires ###
+
+## Initialisation des SVM ##
+
+model_raw = SVMC.SMOModel(X_raw, Y_raw, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_HOG = SVMC.SMOModel(X_HOG, Y_HOG, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_Haar = SVMC.SMOModel(X_Haar, Y_Haar, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+model_mix = SVMC.SMOModel(X_mix, Y_mix, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+
+## Initialisation des erreurs ## 
+
+initial_error = SVMC.decision_function(model_raw, X_raw) - model_raw.y
+model_raw.errors = initial_error
+
+initial_error = SVMC.decision_function(model_HOG, X_HOG) - model_HOG.y
+model_HOG.errors = initial_error
+
+initial_error = SVMC.decision_function(model_Haar, X_Haar) - model_Haar.y
+model_Haar.errors = initial_error
+
+initial_error = SVMC.decision_function(model_mix, X_mix) - model_mix.y
+model_mix.errors = initial_error
+
+## Training des models ## 
+
+model_raw = SVMC.train(model_raw)
+model_HOG = SVMC.train(model_HOG)
+model_Haar = SVMC.train(model_Haar)
+model_mix = SVMC.train(model_mix)
+
+import importlib 
+importlib.reload(SVM)
+
+models = [[model_raw,model_raw.X,"les datas bruts", SVM.raw_data],
+          [model_HOG,model_HOG.X,"HOG", SVM.HOG_data],
+          [model_Haar,model_Haar.X,"Haar", SVM.Haar_data],
+          [model_mix,model_mix.X,"le mixte de Haar et HOG", SVM.HOG_Haar_data]]
+
+for model in models:
+    accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model[0], model[1])
+    print(f"Résultats pour le model avec {model[2]} : \n")
+    print("Accuracy = ", np.round(accuracy*100,2))
+    print("Precision = ", np.round(precision*100,2))
+    print("Recall = ", np.round(recall*100,2))
+    print("F1 = ", np.round(F1*100,2))
+
+# Bon, pas encore fou ça 
+
+SVM.cam(model_HOG,SVM.HOG_data)
+
+# Test avec un BD train 
+
+for model in models:
+    X_test,Y_test = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = model[3])
+    X_test = np.concatenate((X_test[500:1000,:],X_test[1500:,:]))
+    Y_test = np.concatenate((Y_test[500:1000],Y_test[1500:]))
+    
+    accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model[0], X_test)
+    print(f"Résultats pour le model avec {model[2]} sur une BD test : \n")
+    print("Accuracy = ", np.round(accuracy*100,2))
+    print("Precision = ", np.round(precision*100,2))
+    print("Recall = ", np.round(recall*100,2))
+    print("F1 = ", np.round(F1*100,2))
+
+SVM.cam(model_mix,SVM.HOG_Haar_data)
+
+#%% Test du filtre des données avec l'algorithme CB-SR sur un toy test 
+
+def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
+        """Plots the model's decision boundary on the input axes object.
+        Range of decision boundary grid is determined by the training data.
+        Returns decision boundary grid and axes object (`grid`, `ax`). """
+        
+        # Generate coordinate grid of shape [resolution x resolution]
+        # and evaluate the model over the entire space
+        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
+        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
+        grid = [[SVMC.decision_function(model, np.array([xr, yr])) for xr in xrange] for yr in yrange]
+        grid = np.array(grid).reshape(len(xrange), len(yrange))
+        
+        # Plot decision contours using grid and
+        # make a scatter plot of training data
+        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
+                   linestyles=('--', '-', '--'), colors=colors)
+        ax.scatter(model.X[:,0], model.X[:,1],
+                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
+        
+        # Plot support vectors (non-zero alphas)
+        # as circled points (linewidth > 0)
+        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
+        ax.scatter(model.X[mask,0], model.X[mask,1],
+                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
+        
+        return grid, ax
+
+X_train, y_train = make_moons(n_samples=500, noise=0.1,
+                        random_state=1)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train, y_train)
+y_train[y_train == 0] = -1
+
+y_train = y_train
+
+# Set model parameters and initial values
+alpha = 1.0
+m = len(X_train_scaled)
+initial_mu = np.zeros(m)
+initial_b = 0.0
+
+# Instantiate model
+model_test = SVMC.SMOModel(X = X_train_scaled, y = y_train, alpha = alpha, kernel = SVMC.gaussian_kernel,
+                 mu = initial_mu, b = initial_b, errors = np.zeros(m), eps = 1e-2, tol = 1e-2, args = 0.5)
+
+# Initialize error cache
+initial_error = SVMC.decision_function(model_test, X_train_scaled) - model_test.y
+
+model_test.errors = initial_error
+output = SVMC.train(model_test)
+fig, ax = plt.subplots()
+grid, ax = plot_decision_boundary(output, ax, sig = model_test.args)
+
+#%% 
+importlib.reload(SVM)
+#%% Test de la feature LBP 
+
+X_LBP,Y_LBP = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.LBP_data)
+
+### Paramètres des SMO ### 
+
+alpha = 0.8
+mu = np.zeros(X_LBP.shape[0])
+b = 0
+errors = np.zeros(X_LBP.shape[0]) 
+eps = 1e-2 
+tol = 1e-2
+args = (0,1) # Noyau linéaire
+
+### Initialisation du SVM ###
+
+model_LBP = SVMC.SMOModel(X_LBP, Y_LBP, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
+
+### Initialisation des erreurs ### 
+
+initial_error = SVMC.decision_function(model_LBP, X_LBP) - model_LBP.y
+model_LBP.errors = initial_error
+
+### Training du model ### 
+
+model_LBP = SVMC.train(model_LBP)
+
+### Test des performances ###
+
+X_LBP_test,Y_LBP_test = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = SVM.LBP_data)
+X_LBP_test = np.concatenate((X_LBP_test[500:1000,:],X_LBP_test[1500:,:]))
+Y_LBP_test = np.concatenate((Y_LBP_test[500:1000], Y_LBP_test[1500:]))
+
+accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_LBP, X_LBP_test, Y_LBP_test)
+print("Résultats pour le model avec LBP sur une BD test : \n")
+print("Accuracy = ", np.round(accuracy*100,2))
+print("Precision = ", np.round(precision*100,2))
+print("Recall = ", np.round(recall*100,2))
+print("F1 = ", np.round(F1*100,2))
+SVM.cam(model_LBP, SVM.LBP_data)
+
+#%% 
+
+
+
+""" 
+
+Anciens tests. Une bonne majorité utilisent l'algorithme de résolution d'Uzawa, algorithme qui n'est plus utilisé. 
+Certains autres tests, à partir des lignes 1600, correspondent aux premiers tests lors de la construction de ma classe 
+SVM_class contenant l'algorithme de résolution SMO. Toutefois, puisque la classe a été retravaillée plusieurs fois, ces tests 
+ne fonctionnent plus et ne sont donc pas à prendre en compte. 
+
+"""
+
+
+
 #%% Génération de la base de données pour les SVM avec train_data_1
 
 # Création de la liste qui va contenir les matrices des images
@@ -1006,7 +1431,7 @@ print(precision, recall, F1)
 SVM.Affiche_acc(model.y, model.mu, model.b, K)
 
 SVM.cam(model.mu,model.b,SVM.gauss,model.X,model.y)
-"""
+
 #%% Test avec la base de données CIFAR-100 avec Uzawa
 
 with open("BD/cifar-100-python/train", 'rb') as f:
@@ -1657,406 +2082,6 @@ print("F1 = ", np.round(F1_test*100,2))
 #%% 
 
 SVM.cam(model.mu,model.b,SVM.gauss,model.X,model.y)
-
-#%% Test de l'algo sur un exemple du site : c'est validé ! 
-
-from sklearn.datasets import make_moons
-from sklearn.preprocessing import StandardScaler
-
-def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
-        """Plots the model's decision boundary on the input axes object.
-        Range of decision boundary grid is determined by the training data.
-        Returns decision boundary grid and axes object (`grid`, `ax`). """
-        
-        # Generate coordinate grid of shape [resolution x resolution]
-        # and evaluate the model over the entire space
-        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
-        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
-        grid = [[SVMC.decision_function(model, np.array([xr, yr])) for xr in xrange] for yr in yrange]
-        grid = np.array(grid).reshape(len(xrange), len(yrange))
-        
-        # Plot decision contours using grid and
-        # make a scatter plot of training data
-        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
-                   linestyles=('--', '-', '--'), colors=colors)
-        ax.scatter(model.X[:,0], model.X[:,1],
-                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
-        
-        # Plot support vectors (non-zero alphas)
-        # as circled points (linewidth > 0)
-        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
-        ax.scatter(model.X[mask,0], model.X[mask,1],
-                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
-        
-        return grid, ax
-
-X_train, y_train = make_moons(n_samples=500, noise=0.1,
-                        random_state=1)
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train, y_train)
-y_train[y_train == 0] = -1
-
-y_train = y_train
-
-# Set model parameters and initial values
-alpha = 1.0
-m = len(X_train_scaled)
-initial_mu = np.zeros(m)
-initial_b = 0.0
-
-# Instantiate model
-model_test = SVMC.SMOModel(X = X_train_scaled, y = y_train, alpha = alpha, kernel = SVMC.gaussian_kernel,
-                 mu = initial_mu, b = initial_b, errors = np.zeros(m), eps = 1e-2, tol = 1e-2, args = 0.5)
-
-# Initialize error cache
-initial_error = SVMC.decision_function(model_test, X_train_scaled) - model_test.y
-
-# initial_error = decision_function2(model_test.mu, model_test.y, model_test.kernel,
-                                  # model_test.X, model_test.X, model_test.b) - model_test.y
-model_test.errors = initial_error
-output = SVMC.train(model_test)
-fig, ax = plt.subplots()
-grid, ax = plot_decision_boundary(output, ax, sig = model_test.args)
-
-# Test de la fonction metric modifiée 
-accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_test, X_train_scaled)
-
-#%% Test de l'algo des SMO en ayant fait pas mal de modifications 
-
-from sklearn.datasets import make_moons
-from sklearn.preprocessing import StandardScaler
-
-def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
-        """Plots the model's decision boundary on the input axes object.
-        Range of decision boundary grid is determined by the training data.
-        Returns decision boundary grid and axes object (`grid`, `ax`). """
-        
-        # Generate coordinate grid of shape [resolution x resolution]
-        # and evaluate the model over the entire space
-        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
-        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
-        grid = [[SVMC.decision_function2(model.mu, model.y,
-                                   model.X, np.array([xr, yr]),
-                                   model.b, SVMC.gaussian_kernel, sig) for xr in xrange] for yr in yrange]
-        grid = np.array(grid).reshape(len(xrange), len(yrange))
-        
-        # Plot decision contours using grid and
-        # make a scatter plot of training data
-        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
-                   linestyles=('--', '-', '--'), colors=colors)
-        ax.scatter(model.X[:,0], model.X[:,1],
-                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
-        
-        # Plot support vectors (non-zero alphas)
-        # as circled points (linewidth > 0)
-        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
-        ax.scatter(model.X[mask,0], model.X[mask,1],
-                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
-        
-        return grid, ax
-
-X_train, y_train = make_moons(n_samples=500, noise=0.1,
-                        random_state=1)
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train, y_train)
-y_train[y_train == 0] = -1
-
-y_train = y_train.reshape(-1,1)
-
-# Set model parameters and initial values
-alpha = 1.0
-m = len(X_train_scaled)
-initial_mu = np.zeros((m,1))
-initial_b = 0.0
-
-# Instantiate model
-model_test = SVMC.SMOModel(X_train_scaled, y_train, alpha, SVMC.gaussian_kernel,
-                 initial_mu, initial_b, np.zeros(m), 1e-3, 1e-2, args = 0.5)
-
-
-sig = 0.5
-for j in range(len(X_train_scaled)):
-    # initial_error = SVMC.decision_function2(model.mu, model.y, model.X, model.X[j,:], model.b, SVM.kern_poly, (1.5,3)) - model.y[j][0]
-    initial_error = SVMC.decision_function2(model_test.mu, model_test.y, model_test.X, model_test.X[j,:],
-                                            model_test.b, SVMC.gaussian_kernel, sig) - model_test.y[j][0]
-    model_test.errors[j] = initial_error
-# Initialize error cache
-# initial_error = decision_function2(model_test.mu, model_test.y, model_test.kernel,
-                                  # model_test.X, model_test.X, model_test.b) - model_test.y
-
-
-K_test = SVM.Gramm(SVM.gauss, X_train_scaled, sig)
-# model.errors = initial_error
-output = SVMC.train(model_test, K_test, sig)
-fig, ax = plt.subplots()
-grid, ax = plot_decision_boundary(output, ax, sig = sig)
-
-#%% Test des perf avec descripteurs de Haar, de HOG, les deux couplés, avec noyau gaussien et sans noyau gaussien 
-
-X_raw,Y_raw = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.raw_data)
-X_HOG,Y_HOG = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_data)
-X_Haar,Y_Haar = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.Haar_data)
-X_mix,Y_mix = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_Haar_data)
-
-### Paramètres des SMO ### 
-
-alpha = 0.8
-mu = np.zeros(X_raw.shape[0])
-b = 0
-errors = np.zeros(X_raw.shape[0]) 
-eps = 1e-2 
-tol = 1e-2
-args = (0,1)
-
-### Sans noyau gaussien pour débuter i.e. SVM Linéaires ###
-
-## Initialisation des SVM ##
-
-model_raw = SVMC.SMOModel(X_raw, Y_raw, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_HOG = SVMC.SMOModel(X_HOG, Y_HOG, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_Haar = SVMC.SMOModel(X_Haar, Y_Haar, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_mix = SVMC.SMOModel(X_mix, Y_mix, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-
-## Initialisation des erreurs ## 
-
-initial_error = SVMC.decision_function(model_raw, X_raw) - model_raw.y
-model_raw.errors = initial_error
-
-initial_error = SVMC.decision_function(model_HOG, X_HOG) - model_HOG.y
-model_HOG.errors = initial_error
-
-initial_error = SVMC.decision_function(model_Haar, X_Haar) - model_Haar.y
-model_Haar.errors = initial_error
-
-initial_error = SVMC.decision_function(model_mix, X_mix) - model_mix.y
-model_mix.errors = initial_error
-
-## Training des models ## 
-
-model_raw = SVMC.train(model_raw)
-model_HOG = SVMC.train(model_HOG)
-model_Haar = SVMC.train(model_Haar)
-model_mix = SVMC.train(model_mix)
-
-import importlib 
-importlib.reload(SVM)
-
-accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_HOG, model_HOG.X)
-print("Résultats pour le model avec HOG : \n")
-print("Accuracy = ", np.round(accuracy*100,2))
-print("Precision = ", np.round(precision*100,2))
-print("Recall = ", np.round(recall*100,2))
-print("F1 = ", np.round(F1*100,2))
-
-# Bon, pas encore fou ça 
-
-SVM.cam(model_HOG,SVM.HOG_data)
-
-# Test avec un BD train 
-
-X_HOG_test,_ = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = SVM.HOG_data)
-X_HOG_test = np.concatenate((X_HOG_test[500:1000,:],X_HOG_test[1500:,:]))
-
-accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_HOG, X_HOG_test)
-print("Résultats pour le model avec le Haar sur une BD test : \n")
-print("Accuracy = ", np.round(accuracy*100,2))
-print("Precision = ", np.round(precision*100,2))
-print("Recall = ", np.round(recall*100,2))
-print("F1 = ", np.round(F1*100,2))
-
-#%% Sauvegarde du HOG avec alpha = 0.6, il était pas mal
-
-# --- Sauvegarde ---
-with open("model_HOG_lineaire_0.6.pkl", "wb") as f:
-    pickle.dump(model_HOG, f)
-
-# --- Chargement ---
-with open("model_HOG_lineaire_0.6.pkl", "rb") as f:
-    model_HOG = pickle.load(f)
-
-#%% Test de nos SVM & features avec le padding ajouté aux images 
-
-X_raw,Y_raw = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.raw_data)
-X_HOG,Y_HOG = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_data)
-X_Haar,Y_Haar = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.Haar_data)
-X_mix,Y_mix = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.HOG_Haar_data)
-
-### Paramètres des SMO ### 
-
-alpha = 0.8
-mu = np.zeros(X_raw.shape[0])
-b = 0
-errors = np.zeros(X_raw.shape[0]) 
-eps = 1e-2 
-tol = 1e-2
-args = (0,1)
-
-### Sans noyau gaussien pour débuter i.e. SVM Linéaires ###
-
-## Initialisation des SVM ##
-
-model_raw = SVMC.SMOModel(X_raw, Y_raw, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_HOG = SVMC.SMOModel(X_HOG, Y_HOG, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_Haar = SVMC.SMOModel(X_Haar, Y_Haar, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-model_mix = SVMC.SMOModel(X_mix, Y_mix, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-
-## Initialisation des erreurs ## 
-
-initial_error = SVMC.decision_function(model_raw, X_raw) - model_raw.y
-model_raw.errors = initial_error
-
-initial_error = SVMC.decision_function(model_HOG, X_HOG) - model_HOG.y
-model_HOG.errors = initial_error
-
-initial_error = SVMC.decision_function(model_Haar, X_Haar) - model_Haar.y
-model_Haar.errors = initial_error
-
-initial_error = SVMC.decision_function(model_mix, X_mix) - model_mix.y
-model_mix.errors = initial_error
-
-## Training des models ## 
-
-model_raw = SVMC.train(model_raw)
-model_HOG = SVMC.train(model_HOG)
-model_Haar = SVMC.train(model_Haar)
-model_mix = SVMC.train(model_mix)
-
-import importlib 
-importlib.reload(SVM)
-
-models = [[model_raw,model_raw.X,"les datas bruts", SVM.raw_data],
-          [model_HOG,model_HOG.X,"HOG", SVM.HOG_data],
-          [model_Haar,model_Haar.X,"Haar", SVM.Haar_data],
-          [model_mix,model_mix.X,"le mixte de Haar et HOG", SVM.HOG_Haar_data]]
-
-for model in models:
-    accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model[0], model[1])
-    print(f"Résultats pour le model avec {model[2]} : \n")
-    print("Accuracy = ", np.round(accuracy*100,2))
-    print("Precision = ", np.round(precision*100,2))
-    print("Recall = ", np.round(recall*100,2))
-    print("F1 = ", np.round(F1*100,2))
-
-# Bon, pas encore fou ça 
-
-SVM.cam(model_HOG,SVM.HOG_data)
-
-# Test avec un BD train 
-
-for model in models:
-    X_test,Y_test = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = model[3])
-    X_test = np.concatenate((X_test[500:1000,:],X_test[1500:,:]))
-    Y_test = np.concatenate((Y_test[500:1000],Y_test[1500:]))
-    
-    accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model[0], X_test)
-    print(f"Résultats pour le model avec {model[2]} sur une BD test : \n")
-    print("Accuracy = ", np.round(accuracy*100,2))
-    print("Precision = ", np.round(precision*100,2))
-    print("Recall = ", np.round(recall*100,2))
-    print("F1 = ", np.round(F1*100,2))
-
-SVM.cam(model_mix,SVM.HOG_Haar_data)
-
-#%% Test du filtre des données avec l'algorithme CB-SR sur un toy test 
-
-def plot_decision_boundary(model, ax, sig, resolution=100, colors=('b', 'k', 'r'), levels=(-1, 0, 1)):
-        """Plots the model's decision boundary on the input axes object.
-        Range of decision boundary grid is determined by the training data.
-        Returns decision boundary grid and axes object (`grid`, `ax`). """
-        
-        # Generate coordinate grid of shape [resolution x resolution]
-        # and evaluate the model over the entire space
-        xrange = np.linspace(model.X[:,0].min(), model.X[:,0].max(), resolution)
-        yrange = np.linspace(model.X[:,1].min(), model.X[:,1].max(), resolution)
-        grid = [[SVMC.decision_function(model, np.array([xr, yr])) for xr in xrange] for yr in yrange]
-        grid = np.array(grid).reshape(len(xrange), len(yrange))
-        
-        # Plot decision contours using grid and
-        # make a scatter plot of training data
-        ax.contour(xrange, yrange, grid, levels=levels, linewidths=(1, 1, 1),
-                   linestyles=('--', '-', '--'), colors=colors)
-        ax.scatter(model.X[:,0], model.X[:,1],
-                   c=model.y, cmap=plt.cm.viridis, lw=0, alpha=0.25)
-        
-        # Plot support vectors (non-zero alphas)
-        # as circled points (linewidth > 0)
-        mask = (np.round(model.mu, decimals=2) != 0.0).flatten()
-        ax.scatter(model.X[mask,0], model.X[mask,1],
-                   c=model.y[mask], cmap=plt.cm.viridis, lw=1, edgecolors='k')
-        
-        return grid, ax
-
-X_train, y_train = make_moons(n_samples=500, noise=0.1,
-                        random_state=1)
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train, y_train)
-y_train[y_train == 0] = -1
-
-y_train = y_train
-
-# Set model parameters and initial values
-alpha = 1.0
-m = len(X_train_scaled)
-initial_mu = np.zeros(m)
-initial_b = 0.0
-
-# Instantiate model
-model_test = SVMC.SMOModel(X = X_train_scaled, y = y_train, alpha = alpha, kernel = SVMC.gaussian_kernel,
-                 mu = initial_mu, b = initial_b, errors = np.zeros(m), eps = 1e-2, tol = 1e-2, args = 0.5)
-
-# Initialize error cache
-initial_error = SVMC.decision_function(model_test, X_train_scaled) - model_test.y
-
-model_test.errors = initial_error
-output = SVMC.train(model_test)
-fig, ax = plt.subplots()
-grid, ax = plot_decision_boundary(output, ax, sig = model_test.args)
-
-#%% 
-importlib.reload(SVM)
-#%% Test de la feature LBP 
-
-X_LBP,Y_LBP = SVM.routine_test_padded('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 500, 500, config = SVM.LBP_data)
-
-### Paramètres des SMO ### 
-
-alpha = 0.8
-mu = np.zeros(X_LBP.shape[0])
-b = 0
-errors = np.zeros(X_LBP.shape[0]) 
-eps = 1e-2 
-tol = 1e-2
-args = (0,1) # Noyau linéaire
-
-### Initialisation du SVM ###
-
-model_LBP = SVMC.SMOModel(X_LBP, Y_LBP, alpha, SVMC.poly_kernel, mu, b, errors, eps, tol, args)
-
-### Initialisation des erreurs ### 
-
-initial_error = SVMC.decision_function(model_LBP, X_LBP) - model_LBP.y
-model_LBP.errors = initial_error
-
-### Training du model ### 
-
-model_LBP = SVMC.train(model_LBP)
-
-### Test des performances ###
-
-X_LBP_test,Y_LBP_test = SVM.routine_test('BD/train', 'BD/cifar-10-batches-py/data_batch_1', 1000, 1000, config = SVM.LBP_data)
-X_LBP_test = np.concatenate((X_LBP_test[500:1000,:],X_LBP_test[1500:,:]))
-Y_LBP_test = np.concatenate((Y_LBP_test[500:1000], Y_LBP_test[1500:]))
-
-accuracy, precision, recall, F1,confusion_matrix = SVM.metric(model_LBP, X_LBP_test, Y_LBP_test)
-print("Résultats pour le model avec LBP sur une BD test : \n")
-print("Accuracy = ", np.round(accuracy*100,2))
-print("Precision = ", np.round(precision*100,2))
-print("Recall = ", np.round(recall*100,2))
-print("F1 = ", np.round(F1*100,2))
-
-#%% 
-
-SVM.cam(model_LBP, SVM.LBP_data)
 
 #%% Endroit momentanément poubelle 
 

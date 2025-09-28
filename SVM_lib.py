@@ -14,7 +14,7 @@ import pickle
 import os
 import time
 
-#%% Variables globales 
+#%% Variables globales (pour l'instant pas utiles)
 
 global sig
 global c 
@@ -282,7 +282,7 @@ def preprocess_image_cam(img, target_size=(64, 64)):
     y_offset = (max_dim - h) // 2
     x_offset = (max_dim - w) // 2
     
-    # Rajoute l'image dans cette image carrée noir 
+    # Rajoute l'image dans cette image carrée noire
     padded[y_offset:y_offset+h, x_offset:x_offset+w] = img
     
     # Return le resize mais sur un carré plutôt que sur un rectangle pour conserver les formes relatives de l'image
@@ -312,6 +312,7 @@ def add_padding(img, target_size = (64,64), value_padding = 128):
 #%%
 
 def routine_test_padded(path_u,path_v,nb_u,nb_v, config = raw_data, percentage = 0.3):
+    # Nombre d'image auxquelles rajouter du padding
     nb_padded_u = int(nb_u*percentage) 
     nb_padded_v = int(nb_v*percentage)
     
@@ -342,6 +343,7 @@ def routine_test_padded(path_u,path_v,nb_u,nb_v, config = raw_data, percentage =
             except IndexError:
                 files_u.remove(file) # On retire les dossiers trop petits qui n'ont plus d'images à fournir 
 
+            # Padding de manière aléatoire sur les images de la BDD
             if random_value >= 0.5 and compt_padded < nb_padded_u:
                 u_bw = add_padding(u_bw).astype("float64")
                 u.append(u_bw)
@@ -356,8 +358,7 @@ def routine_test_padded(path_u,path_v,nb_u,nb_v, config = raw_data, percentage =
                 
         compt += sous_compteur 
         compt_file += 1
-                
-    # print(f"{compt_padded} images positives ont subit du padding")
+
     # Liste de v contenant les images en teinte de gris 
     v = []
     
@@ -369,14 +370,13 @@ def routine_test_padded(path_u,path_v,nb_u,nb_v, config = raw_data, percentage =
             img_v[:,:,j] = train_cifar[i,(1024*j):(1024*(j+1))].reshape(32,32)
         img_v_bw = cv2.cvtColor(img_v.astype("uint8"), cv2.COLOR_BGR2GRAY)
         random_value = np.random.uniform()
+        
         if random_value >= 0.5 and compt_padded < nb_padded_v:
             img_v_bw = add_padding(img_v_bw).astype("float64")
             v.append(img_v_bw)
             compt_padded += 1 
         else:
             v.append(cv2.resize(img_v_bw, (64,64), interpolation = cv2.INTER_AREA).astype("float64"))
-    
-    # print(f"{compt_padded} images négatives ont subit du padding")
     
     return config(u,v)
 
@@ -421,7 +421,7 @@ def routine_test(path_u,path_v,nb_u,nb_v, config = raw_data):
     
     return config(u,v)
    
-#%% Descripteurs HOG : Fait pour des images de taille 64x64 mais être facilement adapté juste en changeant la taille des cellules
+#%% Descripteurs HOG : Fait pour des images de taille 64x64 mais peut être facilement adapté juste en changeant la taille des cellules
 
 @numba.njit
 def hist_OG(G, theta, n, nbins = 9, min_val = 0, max_val = 180):
@@ -984,9 +984,152 @@ def LBP(img):
             
     return hist_img 
 
-#%% SVM hard margin avec UZAWA
 
-@numba.jit
+#%% Fonction qui permet le calcul des metriques precision, recall et F1-score 
+
+def metric(model, x_test, y_test):
+    n = len(x_test)
+    confusion_matrix = np.zeros((2,2))
+    for i in range(n):
+        estimation = np.sign(SVMC.decision_function(model, x_test[i,:]))
+        if estimation > 0 and y_test[i] > 0:
+            confusion_matrix[1,1] += 1 # Détection d'un true positive 
+        elif estimation > 0 and y_test[i] < 0:
+            confusion_matrix[0,1] += 1 # Détection d'un false positive
+        elif estimation < 0 and y_test[i] > 0:
+            confusion_matrix[1,0] += 1 # Détection d'un false negative 
+        elif estimation < 0 and y_test[i] < 0:
+            confusion_matrix[0,0] += 1 # Détection d'un true negative 
+    try:
+        precision = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[0,1])
+        recall = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[1,0])
+        F1 = 2*precision*recall/(precision+recall) 
+        accuracy = (confusion_matrix[0,0]+confusion_matrix[1,1])/n 
+        
+        return accuracy, precision, recall, F1,confusion_matrix
+    
+    except ValueError:
+        print("Division by zero occured in the confusion matrix, change the model")
+        return None 
+
+#%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
+
+def cam(model, config):
+    # Ouvrir la caméra (0 si caméra principale)
+    cap = cv2.VideoCapture(0)
+    
+    # Vérification de l'ouverture de la caméra
+    if not cap.isOpened():
+        print("Erreur: Impossible d'ouvrir la caméra.")
+        exit()
+    
+    # Coordonnées (x, y) pour positionner le texte
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    # Initialiser le timer
+    last_check = time.time()
+    intervalle = 0.5  # 0.5 secondes
+    value = 0
+    test = 0
+    text = ""
+    
+    # Boucle de capture vidéo
+    while True:
+        # Lecture de l'image
+        ret, frame = cap.read()
+        # Vérifier si la lecture de l'image est réussie
+        if not ret:
+            print("Erreur: Impossible de lire l'image depuis la caméra.")
+            break
+        
+        hauteur, largeur, _ = frame.shape
+
+        # Dimensions du rectangle central
+        hauteur_rect = 450 
+        largeur_rect = 300
+        x_centre = largeur // 2
+        y_centre = hauteur // 2
+        x1 = x_centre - largeur_rect // 2
+        y1 = y_centre - hauteur_rect // 2
+        x2 = x_centre + largeur_rect // 2
+        y2 = y_centre + hauteur_rect // 2
+
+        # Dessiner un rectangle bleu (épaisseur 1)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 1)
+
+        # Dessiner les axes X et Y en bleu à l'intérieur du rectangle
+        # Axe Y (vertical)
+        cv2.line(frame, (x_centre, y1), (x_centre, y2), (255, 0, 0), 1)
+        # Axe X (horizontal)
+        cv2.line(frame, (x1, y_centre), (x2, y_centre), (255, 0, 0), 1)
+        
+        # Ajouter le texte "placez votre tête ici"
+        texte = "Placez votre tete ici"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        epaisseur = 1
+        couleur = (255, 0, 0)  # Bleu
+
+        # Obtenir les dimensions du texte
+        (text_width, text_height), _ = cv2.getTextSize(texte, font, font_scale, epaisseur)
+        text_x = x_centre - text_width // 2
+        text_y = y2 - 25  # 50 pixels au-dessus du bas du rectangle
+
+        # Afficher le texte
+        cv2.putText(frame, texte, (text_x, text_y), font, font_scale, couleur, epaisseur, cv2.LINE_AA)
+
+        # Extraire la portion centrale de l'image
+        frame_centre = frame[y1:y2, x1:x2]
+        
+        # Vérifier si 0.5s sont passées depuis le dernier test
+        if time.time() - last_check >= intervalle:
+            last_check = time.time()
+    
+            # Traitement SVM
+            img = cv2.cvtColor(frame_centre, cv2.COLOR_BGR2GRAY)
+            img_test = preprocess_image_cam(img).astype("float64")
+            x = config(img_test, None)
+            value = SVMC.decision_function(model, x)
+            test = np.sign(value)
+            print(value)
+
+        # Afficher les résultats du dernier test connu
+        if test == 1:
+            position = (int(0.36 * frame.shape[1]), int(0.10 * frame.shape[0]))
+            text = "Bienvenue !"
+            font_color = (0, 255, 0)
+        elif test == -1:
+            position = (int(0.25 * frame.shape[1]), int(0.10 * frame.shape[0]))
+            text = "Visage non reconnu"
+            font_color = (0, 0, 255)
+        else:
+            text = ""
+            font_color = (255, 255, 255)
+
+        if text:
+            cv2.putText(frame, text, position, font, 1, font_color, 2)
+        
+        # Afficher l'image en temps réel
+        cv2.imshow('Camera en temps reel', frame)
+        
+        # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
+        if cv2.waitKey(1) == 27 :
+            break
+        
+    cap.release()
+    cv2.destroyAllWindows() 
+
+#%% 
+
+"""
+
+L'ensemble des fonctions qui suivent sont des fonctions liées à l'ancienne méthode de résolution des SVM. Ne pas en tenir 
+compte pour la méthode actuelle. 
+
+"""
+
+#%% SVM hard margin avec UZAWA (ancien algorithme de résolution)
+
 def Hard_margin(rho, it, tol, u, v, C):
     p = np.shape(u)[1]
     # Création du vecteur des multiplicateurs de Lagrange
@@ -1032,16 +1175,14 @@ def Hard_margin(rho, it, tol, u, v, C):
 
 #%% Fonction de projection sur R+
 
-@numba.jit
 def proj(x):
     y = x
     for i in range(0, len(x)):
         y[i] = np.maximum(0,x[i])
     return y
 
-#%% SVM soft margin avec UZAWA
+#%% SVM soft margin avec UZAWA (ancien algorithme de résolution)
 
-@numba.jit
 def Soft_margin(alpha, rho, it, tol, u, v, C):
     p = np.shape(u)[1]
     # Création du vecteur des multiplicateurs de Lagrange
@@ -1087,14 +1228,13 @@ def Soft_margin(alpha, rho, it, tol, u, v, C):
 
 #%% Fonction de projection sur R+
 
-@numba.jit
 def proj_alpha(x,alpha):
     y = x
     for i in range(0, len(x)):
         y[i] = np.minimum(np.maximum(0,x[i]),alpha)
     return y
 
-#%% Fonction qui permet de déterminer dans quelle partie du demi espace se trouve le point x
+#%% Fonction qui permet de déterminer dans quelle partie du demi espace se trouve le point x (pour ancien algorithme de résolution)
 
 def f(x,w,b):
     if np.sign(w.T@x - b) > 0 :
@@ -1242,62 +1382,6 @@ def metric_uza(y,a,b,X,K,x):
     accuracy = (confusion_matrix[0,0]+confusion_matrix[1,1])/n 
     return accuracy, precision, recall, F1,confusion_matrix
 
-#%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-"""
-def cam(a,b,kernel,X,y):
-    # Ouvrir la caméra (0 si caméra principale)
-    cap = cv2.VideoCapture(0)
-    
-    # Vérification de l'ouverture de la caméra
-    if not cap.isOpened():
-        print("Erreur: Impossible d'ouvrir la caméra.")
-        exit()
-    
-    # Coordonnées (x, y) pour positionner le texte
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    # Boucle de capture vidéo
-    while True:
-        # Lecture de l'image
-        ret, frame = cap.read()
-        # Vérifier si la lecture de l'image est réussie
-        if not ret:
-            print("Erreur: Impossible de lire l'image depuis la caméra.")
-            break
-        
-        # Capture de l'image pour la fonction test 
-        img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        img_test = cv2.resize(img,(32,32)).reshape(-1, order = 'C').astype("float64")
-        #img_test = cv2.normalize(img_test,None, 0, 1, cv2.NORM_MINMAX)
-        img_test = img_test*fac + 0.01
-        estimation = fD_uza(a,b,X,kernel,img_test,y)
-        print(estimation)
-        test = np.sign(estimation)
-        
-        if test == 1 :
-            # position où on écrit le texte
-            position = (int(0.36*frame.shape[1]),int(0.10*frame.shape[0])) 
-            text = "Bienvenue !"
-            font_thickness = 2
-            font_scale = 1
-            font_color = (0, 255, 0)  # Vert
-            cv2.putText(frame, text, position, font, font_scale, font_color, font_thickness)
-        elif test == -1:
-            # position où on écrit le texte
-            position = (int(0.25*frame.shape[1]),int(0.10*frame.shape[0])) 
-            font_thickness = 2
-            font_scale = 1
-            text = "Visage non reconnu"
-            font_color = (0, 0, 255)  # Rouge
-            cv2.putText(frame, text, position, font, font_scale, font_color, font_thickness)
-        
-        # Afficher l'image en temps réel
-        cv2.imshow('Camera en temps reel', frame)
-        
-        # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
-        if cv2.waitKey(1) == 27 :
-            break
-"""
 #%% SVM soft margin algorithme SMO simplifié 
 
 def SMO_simplified(alpha, tol, N, X, Y, K):
@@ -1494,33 +1578,6 @@ def f_D(x,X,mu,y,K,b):
         
     return ((mu*y).T@G)[0,0] - b
 
-#%% Fonction qui permet le calcul des metriques precision, recall et F1-score 
-
-def metric(model, x_test, y_test):
-    n = len(x_test)
-    confusion_matrix = np.zeros((2,2))
-    for i in range(n):
-        estimation = np.sign(SVMC.decision_function(model, x_test[i,:]))
-        if estimation > 0 and y_test[i] > 0:
-            confusion_matrix[1,1] += 1 # Détection d'un true positive 
-        elif estimation > 0 and y_test[i] < 0:
-            confusion_matrix[0,1] += 1 # Détection d'un false positive
-        elif estimation < 0 and y_test[i] > 0:
-            confusion_matrix[1,0] += 1 # Détection d'un false negative 
-        elif estimation < 0 and y_test[i] < 0:
-            confusion_matrix[0,0] += 1 # Détection d'un true negative 
-    try:
-        precision = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[0,1])
-        recall = confusion_matrix[1,1]/(confusion_matrix[1,1] + confusion_matrix[1,0])
-        F1 = 2*precision*recall/(precision+recall) 
-        accuracy = (confusion_matrix[0,0]+confusion_matrix[1,1])/n 
-        
-        return accuracy, precision, recall, F1,confusion_matrix
-    
-    except ValueError:
-        print("Division by zero occured in the confusion matrix, change the model")
-        return None 
-
 #%% Affichage de la métrique Accuracy
 
 def Affiche_acc(y,mu,b,K):
@@ -1539,32 +1596,6 @@ def Affiche_acc(y,mu,b,K):
         acc_reshape = np.concatenate((acc_reshape, accuracy[50*i:(50*(i+1)),0].reshape(-1,1)), axis = 1)
     print(np.shape(acc_reshape))
     plt.imshow(acc_reshape)
-
-#%% Fonction that crops and resizes the images for the preprocessing of the data
-
-def crop_and_resize(img, w, h):
-        im_h, im_w = img.shape[:2]
-        res_aspect_ratio = w/h
-        input_aspect_ratio = im_w/im_h
-
-        if input_aspect_ratio > res_aspect_ratio:
-            im_w_r = int(input_aspect_ratio*h)
-            im_h_r = h
-            img = cv2.resize(img, (im_w_r , im_h_r))
-            x1 = int((im_w_r - w)/2)
-            x2 = x1 + w
-            img = img[:, x1:x2]
-        if input_aspect_ratio < res_aspect_ratio:
-            im_w_r = w
-            im_h_r = int(w/input_aspect_ratio)
-            img = cv2.resize(img, (im_w_r , im_h_r))
-            y1 = int((im_h_r - h)/2)
-            y2 = y1 + h
-            img = img[y1:y2, :]
-        if input_aspect_ratio == res_aspect_ratio:
-            img = cv2.resize(img, (w, h))
-
-        return img
 
 #%% 
 @numba.jit
@@ -1618,140 +1649,9 @@ def ACPK(X,K):
     
     return P,Sig,Vk
 
-#%% Fonction qui permet la classification d'image par 
-
-@numba.jit 
-def Classification_Haar(Img, model,arg):
-    m,n = np.shape(Img)
-    
-    window = 12 
-    while window < m or window < n:
-        kx = int((3*m)/window - 2)
-        ky = int((3*n)/window - 2)
-        pos_x = 0
-        for i in range(kx):
-            pos_y = 0
-            for j in range(ky):
-                Img_fetch = cv2.resize(Img[(pos_x):(pos_x+window),(pos_y):(pos_y+window)],(64,64)) 
-                Features = Haar_features(Img_fetch)
-                test = np.abs(SVMC.decision_function2(model.mu, model.y, model.X, Features, model.b, model.kernel, arg))
-                if test > 0:
-                    return test, True 
-                pos_y += int(window/3) 
-            pos_x += int(window/3)
-        window = round(window*1.25)
-        return False 
-
-#%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-
-def cam(model, config):
-    # Ouvrir la caméra (0 si caméra principale)
-    cap = cv2.VideoCapture(0)
-    
-    # Vérification de l'ouverture de la caméra
-    if not cap.isOpened():
-        print("Erreur: Impossible d'ouvrir la caméra.")
-        exit()
-    
-    # Coordonnées (x, y) pour positionner le texte
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    # Initialiser le timer
-    last_check = time.time()
-    intervalle = 0.5  # 0.5 secondes
-    value = 0
-    test = 0
-    text = ""
-    
-    # Boucle de capture vidéo
-    while True:
-        # Lecture de l'image
-        ret, frame = cap.read()
-        # Vérifier si la lecture de l'image est réussie
-        if not ret:
-            print("Erreur: Impossible de lire l'image depuis la caméra.")
-            break
-        
-        hauteur, largeur, _ = frame.shape
-
-        # Dimensions du rectangle central
-        hauteur_rect = 450 
-        largeur_rect = 300
-        x_centre = largeur // 2
-        y_centre = hauteur // 2
-        x1 = x_centre - largeur_rect // 2
-        y1 = y_centre - hauteur_rect // 2
-        x2 = x_centre + largeur_rect // 2
-        y2 = y_centre + hauteur_rect // 2
-
-        # Dessiner un rectangle bleu (épaisseur 1)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 1)
-
-        # Dessiner les axes X et Y en bleu à l'intérieur du rectangle
-        # Axe Y (vertical)
-        cv2.line(frame, (x_centre, y1), (x_centre, y2), (255, 0, 0), 1)
-        # Axe X (horizontal)
-        cv2.line(frame, (x1, y_centre), (x2, y_centre), (255, 0, 0), 1)
-        
-        # Ajouter le texte "placez votre tête ici"
-        texte = "Placez votre tete ici"
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.6
-        epaisseur = 1
-        couleur = (255, 0, 0)  # Bleu
-
-        # Obtenir les dimensions du texte
-        (text_width, text_height), _ = cv2.getTextSize(texte, font, font_scale, epaisseur)
-        text_x = x_centre - text_width // 2
-        text_y = y2 - 25  # 50 pixels au-dessus du bas du rectangle
-
-        # Afficher le texte
-        cv2.putText(frame, texte, (text_x, text_y), font, font_scale, couleur, epaisseur, cv2.LINE_AA)
-
-        # Extraire la portion centrale de l'image
-        frame_centre = frame[y1:y2, x1:x2]
-        
-        # Vérifier si 0.5s sont passées depuis le dernier test
-        if time.time() - last_check >= intervalle:
-            last_check = time.time()
-    
-            # Traitement SVM
-            img = cv2.cvtColor(frame_centre, cv2.COLOR_BGR2GRAY)
-            img_test = preprocess_image_cam(img).astype("float64")
-            x = config(img_test, None)
-            value = SVMC.decision_function(model, x)
-            test = np.sign(value)
-            print(value)
-
-        # Afficher les résultats du dernier test connu
-        if test == 1:
-            position = (int(0.36 * frame.shape[1]), int(0.10 * frame.shape[0]))
-            text = "Bienvenue !"
-            font_color = (0, 255, 0)
-        elif test == -1:
-            position = (int(0.25 * frame.shape[1]), int(0.10 * frame.shape[0]))
-            text = "Visage non reconnu"
-            font_color = (0, 0, 255)
-        else:
-            text = ""
-            font_color = (255, 255, 255)
-
-        if text:
-            cv2.putText(frame, text, position, font, 1, font_color, 2)
-        
-        # Afficher l'image en temps réel
-        cv2.imshow('Camera en temps reel', frame)
-        
-        # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
-        if cv2.waitKey(1) == 27 :
-            break
-        
-    cap.release()
-    cv2.destroyAllWindows() 
-
 #%% SVM soft margin à partir de l'algorithme d'uzawa à noyaux 
 
-def Soft_margin_K(alpha, roh, it, tol, u, v, C):
+def Soft_margin_K(alpha, rho, it, tol, u, v, C):
     """
     Cette fonction est la même que la fonction soft margin à la différence que les vecteurs u, v et la matrice C à 
     donner en entrée de cette dernières continennent les données transformées par le noyau
@@ -1759,7 +1659,7 @@ def Soft_margin_K(alpha, roh, it, tol, u, v, C):
     ----------
     alpha : TYPE
         DESCRIPTION.
-    roh : TYPE
+    rho : TYPE
         DESCRIPTION.
     it : TYPE
         DESCRIPTION.
@@ -1907,233 +1807,3 @@ def Moindre_carre_K(rho, it, tol, K, B, alpha):
         print(f"Itération de l'algorithme : {k} pour une erreur de : {err}")
             
     return A,L
-    
-   
-#%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-"""
-def cam(w,b):
-    # Ouvrir la caméra (0 si caméra principale)
-    cap = cv2.VideoCapture(0)
-    
-    # Vérification de l'ouverture de la caméra
-    if not cap.isOpened():
-        print("Erreur: Impossible d'ouvrir la caméra.")
-        exit()
-    
-    # Coordonnées (x, y) pour positionner le texte
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    # Boucle de capture vidéo
-    while True:
-        # Lecture de l'image
-        ret, frame = cap.read()
-        # Vérifier si la lecture de l'image est réussie
-        if not ret:
-            print("Erreur: Impossible de lire l'image depuis la caméra.")
-            break
-        
-        # Initialisation des variables pour gérer le texte
-        text_blue = "Veuillez lancer le programme de reconnaissance faciale"
-        font_thickness = 2
-        font_scale = 1
-        font_color_blue = (255, 0, 0)  # Bleu
-        
-        # Centrage et découpage du texte bleu pour retour à la ligne
-        (text_width, text_height), _ = cv2.getTextSize(text_blue, font, font_scale, font_thickness)
-        max_text_width = frame.shape[1] - 40  # Marge de 20 pixels de chaque côté
-        wrapped_text = []
-        words = text_blue.split(' ')
-        current_line = ""
-        
-        for word in words:
-            if cv2.getTextSize(current_line + word + " ", font, font_scale, font_thickness)[0][0] <= max_text_width:
-                current_line += word + " "
-            else:
-                wrapped_text.append(current_line.strip())
-                current_line = word + " "
-        wrapped_text.append(current_line.strip())
-
-        # Dessiner le texte bleu centré si aucun texte rouge ou vert n'est affiché
-        if cv2.waitKey(1) != 112 and cv2.waitKey(1) != 27:
-            y0 = int(0.10 * frame.shape[0])
-            for i, line in enumerate(wrapped_text):
-                text_size = cv2.getTextSize(line, font, font_scale, font_thickness)[0]
-                x = int((frame.shape[1] - text_size[0]) / 2)  # Centrer horizontalement
-                y = y0 + i * text_size[1] + i * 10  # Ajuster l'espacement entre les lignes
-                cv2.putText(frame, line, (x, y), font, font_scale, font_color_blue, font_thickness)
-        
-        img_moy = np.zeros((480,640))
-        N = 1000 
-        k = 0 
-        test = int
-        if cv2.waitKey(1) == 112:
-            while k < N:
-                
-                # Capture de l'image pour en faire les moyennes
-                img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype("float64")
-                img_moy += img 
-                k+= 1
-                
-                # Afficher l'image en temps réel
-                cv2.imshow('Camera en temps reel', frame)
-                
-            img_moy = img_moy/N
-            
-            centered_frame = center(img_moy)
-            whitened_frame = whitening(centered_frame)
-            
-            img_test = cv2.resize(whitened_frame,(32,32)).reshape(-1, order = 'C').astype("float64")
-            img_test = img_test*fac + 0.01 
-            test = f(img_test,w,b)
-            
-            
-            img_test = cv2.resize(img_moy,(32,32)).reshape(-1, order = 'C').astype("float64")
-            img_test = img_test*fac + 0.01 
-            test = f(img_test,w,b)
-        
-        centered_frame = center(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
-        whitened_frame = whitening(centered_frame)
-        
-        img_test = cv2.resize(whitened_frame,(32,32)).reshape(-1, order = 'C').astype("float64")
-        img_test = img_test*fac + 0.01 
-        test = f(img_test,w,b)
-        
-        if test == 1 :
-            # position où on écrit le 
-            position = (int(0.36*frame.shape[1]),int(0.10*frame.shape[0])) 
-            text = "Bienvenue !"
-            font_thickness = 2
-            font_scale = 1
-            font_color = (0, 255, 0)  # Vert
-            cv2.putText(frame, text, position, font, font_scale, font_color, font_thickness)
-        elif test == -1:
-            # position où on écrit le texte
-            position = (int(0.25*frame.shape[1]),int(0.10*frame.shape[0])) 
-            font_thickness = 2
-            font_scale = 1
-            text = "Visage non reconnu"
-            font_color = (0, 0, 255)  # Rouge
-            cv2.putText(frame, text, position, font, font_scale, font_color, font_thickness)
-        
-        # Afficher l'image en temps réel
-        cv2.imshow('Camera en temps reel', frame)
-        
-        # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
-        if cv2.waitKey(1) == 27 :
-            break
-"""
-#%% Fonction qui permet d'afficher la caméra pour tester en temps réel l'algorithme
-"""
-def cam(w,b):
-    # Ouvrir la caméra (0 si caméra principale)
-    cap = cv2.VideoCapture(0)
-    
-    # Vérification de l'ouverture de la caméra
-    if not cap.isOpened():
-        print("Erreur: Impossible d'ouvrir la caméra.")
-        exit()
-    
-    # Coordonnées (x, y) pour positionner le texte
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    test = int
-    
-    font_thickness = 2
-    font_scale = 1
-    
-    # Initialisation des variables pour gérer le texte bleu
-    text_blue = "Veuillez lancer le programme de reconnaissance faciale"
-    blue = (255, 0, 0)
-    
-    # Initialisation des variables pour gérer le texte rouge
-    text_red = "Visage non reconnu"
-    red = (0, 0, 255)  # Rouge
-    
-    # Initialisation des variables pour gérer le texte vert
-    text_green = "Bienvenue !"
-    green = (0, 255, 0)  # Vert
-    
-    # Boucle de capture vidéo
-    while True:
-        # Lecture de l'image
-        ret, frame = cap.read()
-        # Vérifier si la lecture de l'image est réussie
-        if not ret:
-            print("Erreur: Impossible de lire l'image depuis la caméra.")
-            break
-        
-        # Centrage et découpage du texte bleu pour retour à la ligne
-        (text_width, text_height), _ = cv2.getTextSize(text_blue, font, font_scale, font_thickness)
-        max_text_width = frame.shape[1] - 40  # Marge de 20 pixels de chaque côté
-        wrapped_text = []
-        words = text_blue.split(' ')
-        current_line = ""
-        
-        for word in words:
-            if cv2.getTextSize(current_line + word + " ", font, font_scale, font_thickness)[0][0] <= max_text_width:
-                current_line += word + " "
-            else:
-                wrapped_text.append(current_line.strip())
-                current_line = word + " "
-        wrapped_text.append(current_line.strip())
-
-        # Dessiner le texte bleu centré si aucun texte rouge ou vert n'est affiché
-        if cv2.waitKey(1) != 112 and cv2.waitKey(1) != 27:
-            y0 = int(0.10 * frame.shape[0])
-            for i, line in enumerate(wrapped_text):
-                text_size = cv2.getTextSize(line, font, font_scale, font_thickness)[0]
-                x = int((frame.shape[1] - text_size[0]) / 2)  # Centrer horizontalement
-                y = y0 + i * text_size[1] + i * 10  # Ajuster l'espacement entre les lignes
-                cv2.putText(frame, line, (x, y), font, font_scale, blue, font_thickness)
-        
-        img_moy = np.zeros((480,640,3))
-        centered_frame = np.copy(img_moy)
-        whitened_frame = np.copy(img_moy)
-        N = 1000 
-        k = 0 
-        
-        if cv2.waitKey(1) == 112:
-            while k < N:
-                
-                # Capture de l'image pour en faire les moyennes                
-                img_moy += frame 
-                k+= 1
-                
-                # Afficher l'image en temps réel
-                cv2.imshow('Camera en temps reel', frame)
-                
-            for i in range(3):
-                centered_frame[:,:,i] = center(img_moy[:,:,i])
-                whitened_frame[:,:,i] = whitening(centered_frame[:,:,i])
-            
-            img_test = cv2.resize(cv2.cvtColor(whitened_frame.astype("uint8"), cv2.COLOR_BGR2GRAY),(32,32)).reshape(-1, order = 'C').astype("float64")
-            img_test = img_test*fac + 0.01 
-            test = f(img_test,w,b)
-            """
-"""
-            img_test = cv2.resize(img_moy,(32,32)).reshape(-1, order = 'C').astype("float64")
-            img_test = img_test*fac + 0.01 
-            test = f(img_test,w,b)"""
-        
-"""centered_frame = center(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
-        whitened_frame = whitening(centered_frame)
-        
-        img_test = cv2.resize(whitened_frame,(32,32)).reshape(-1, order = 'C').astype("float64")
-        img_test = img_test*fac + 0.01 
-        test = f(img_test,w,b)"""
-"""
-        if test == 1 :
-            # position où on écrit le 
-            position_green = (int(0.36*frame.shape[1]),int(0.10*frame.shape[0])) 
-            cv2.putText(frame, text_green, position_green, font, font_scale, green, font_thickness)
-        elif test == -1:
-            position_red = (int(0.25*frame.shape[1]),int(0.10*frame.shape[0])) 
-            cv2.putText(frame, text_red, position_red, font, font_scale, red, font_thickness)
-        
-        # Afficher l'image en temps réel
-        cv2.imshow('Camera en temps reel', frame)
-        
-        # Attendre 1 milliseconde et vérifier si l'utilisateur appuie sur la touche echap pour quitter
-        if cv2.waitKey(1) == 27 :
-            break
-"""

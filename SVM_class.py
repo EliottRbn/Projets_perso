@@ -8,8 +8,8 @@ SVM Class for SMO algorithm
 import numpy as np
 import numba 
 
-#%% class SMOModel:
-"""Container object for the model used for sequential minimal optimization."""
+#%% 
+
 class SMOModel:
     def __init__(self, X, y, alpha, kernel, mu, b, errors, eps, tol, args):
         self.X = X               # Training data vector
@@ -333,8 +333,19 @@ def update(G, i, non_opt):
         actualisation[idx] = G[i, non_opt[idx]]
     return actualisation
 
+#%% 
+
+
 """
 
+Test d'optimisation de l'algorithme de SMO via une étape de filtrage des données en se basant sur une thèse. 
+Le test n'est pas encore concluant, l'algorithme est bien trop lent et ne semble pas filtrer les données comme voulu.
+
+"""
+
+#%% 
+
+"""
 def covered_hyperplan(x_i, x_k, x, kernel, args):
     D = kernel(x_i, x_i, args) + kernel(x_k, x_k, args) - 2*kernel(x_i, x_k, args)
     if D == 0:
